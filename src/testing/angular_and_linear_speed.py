@@ -23,8 +23,7 @@ DEADZONE_STICK = 0.08
 DEADZONE_TRIGGER = 0.03
 
 V_MAX = 1.0
-W_TANK = 1.0     # giro fuerte cuando no hay avance/retroceso
-W_CURVA = 0.45   # giro más suave cuando sí hay gatillo
+W_MAX = 1.0
 
 def normalize_axis(value, min_val=0, max_val=255, center=128):
     if value >= center:
@@ -42,43 +41,36 @@ def apply_deadzone(x, deadzone):
         return 0.0
     return x
 
-def describir_movimiento(v, w, eps_v=0.05, eps_w=0.05):
-    adelante = v > eps_v
-    atras = v < -eps_v
-    izquierda = w < -eps_w
-    derecha = w > eps_w
-    quieto = abs(v) <= eps_v and abs(w) <= eps_w
-
-    if quieto:
-        return "QUIETO"
-
-    if not adelante and not atras:
-        if izquierda:
-            return "GIRO DE TANQUE A LA IZQUIERDA"
-        if derecha:
-            return "GIRO DE TANQUE A LA DERECHA"
+def describir_movimiento(v, w, eps=0.05):
+    adelante = v > eps
+    atras = v < -eps
+    izquierda = w < -eps
+    derecha = w > eps
 
     if adelante and not izquierda and not derecha:
         return "ADELANTE"
-    if atras and not izquierda and not derecha:
+    elif atras and not izquierda and not derecha:
         return "ATRAS"
-    if adelante and izquierda:
-        return "ADELANTE + CURVA A LA IZQUIERDA"
-    if adelante and derecha:
-        return "ADELANTE + CURVA A LA DERECHA"
-    if atras and izquierda:
-        return "ATRAS + CURVA A LA IZQUIERDA"
-    if atras and derecha:
-        return "ATRAS + CURVA A LA DERECHA"
-
-    return "MOVIMIENTO MIXTO"
+    elif not adelante and not atras and izquierda:
+        return "GIRANDO A LA IZQUIERDA"
+    elif not adelante and not atras and derecha:
+        return "GIRANDO A LA DERECHA"
+    elif adelante and izquierda:
+        return "ADELANTE + GIRANDO A LA IZQUIERDA"
+    elif adelante and derecha:
+        return "ADELANTE + GIRANDO A LA DERECHA"
+    elif atras and izquierda:
+        return "ATRAS + GIRANDO A LA IZQUIERDA"
+    elif atras and derecha:
+        return "ATRAS + GIRANDO A LA DERECHA"
+    else:
+        return "QUIETO"
 
 def main():
     dev = InputDevice(DS4_PATH)
 
     print(f"Using device: {dev.path} ({dev.name})")
-    print("R2 = adelante | L2 = atras | LX = giro")
-    print("Sin gatillo + LX = giro de tanque\n")
+    print("R2 = adelante | L2 = atras | LX = giro\n")
 
     estado = {
         ABS_X: AXIS_CENTER,
@@ -110,19 +102,12 @@ def main():
                 l2 = 0.0 if l2 < DEADZONE_TRIGGER else l2
                 r2 = 0.0 if r2 < DEADZONE_TRIGGER else r2
 
-                # Velocidad lineal
+                # velocidad lineal: adelante/atrás
                 v = V_MAX * (r2 - l2)
 
-                # Velocidad angular:
-                # - si no hay avance/retroceso -> giro de tanque
-                # - si sí hay avance/retroceso -> curva suave
-                if abs(v) < 0.05:
-                    w = W_TANK * lx
-                else:
-                    w = W_CURVA * lx
-
-                # Si al probar el sentido sale invertido, cambia a:
-                # w = -w
+                # velocidad angular: giro
+                # si el giro sale invertido, aquí solo cambia a: w = -W_MAX * lx
+                w = W_MAX * lx
 
                 movimiento = describir_movimiento(v, w)
 
@@ -144,7 +129,7 @@ def main():
     finally:
         try:
             dev.ungrab()
-        except Exception:
+        except:
             pass
 
 if __name__ == "__main__":
