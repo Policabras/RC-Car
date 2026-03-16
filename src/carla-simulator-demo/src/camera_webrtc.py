@@ -19,8 +19,8 @@ CARLA_PORT = 2000
 HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 8081
 
-IMAGE_W = 640
-IMAGE_H = 360
+IMAGE_W = 1280
+IMAGE_H = 720
 FOV = 90
 SENSOR_TICK = 0.0
 
@@ -326,7 +326,7 @@ def setup_carla():
     bp.set_attribute("sensor_tick", str(SENSOR_TICK))
 
     if bp.has_attribute("enable_postprocess_effects"):
-        bp.set_attribute("enable_postprocess_effects", "false")
+        bp.set_attribute("enable_postprocess_effects", "true")
 
     transform = carla.Transform(
         carla.Location(x=CAM_X, y=CAM_Y, z=CAM_Z),
