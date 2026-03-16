@@ -17,8 +17,9 @@
       --warn: #f59e0b;
       --danger: #ef4444;
       --ok: #22c55e;
-      --shadow: 0 18px 50px rgba(0,0,0,0.35);
-      --radius: 22px;
+      --shadow: 0 14px 36px rgba(0,0,0,0.30);
+      --radius: 20px;
+      --gap: 12px;
     }
 
     * {
@@ -28,6 +29,11 @@
       font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    html, body {
+      width: 100%;
+      min-height: 100%;
+    }
+
     body {
       background:
         radial-gradient(circle at top right, rgba(96,165,250,0.14), transparent 28%),
@@ -35,44 +41,46 @@
         linear-gradient(180deg, #09101d 0%, #0b1020 100%);
       color: var(--text);
       min-height: 100vh;
-      padding: 22px;
+      padding: 10px 12px;
+      overflow-x: hidden;
     }
 
     .dashboard {
-      max-width: 1480px;
-      margin: 0 auto;
+      width: 100%;
       display: grid;
-      gap: 18px;
+      gap: var(--gap);
     }
 
     .topbar {
+      width: 100%;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 16px;
-      background: rgba(18, 26, 47, 0.85);
+      gap: 14px;
+      background: rgba(18, 26, 47, 0.86);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 18px 22px;
+      padding: 14px 18px;
       box-shadow: var(--shadow);
       backdrop-filter: blur(8px);
     }
 
     .title h1 {
-      font-size: clamp(1.2rem, 2vw, 1.8rem);
+      font-size: clamp(1.15rem, 1.7vw, 1.7rem);
       font-weight: 800;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.2px;
+      line-height: 1.1;
     }
 
     .title p {
       color: var(--muted);
       margin-top: 4px;
-      font-size: 0.95rem;
+      font-size: 0.88rem;
     }
 
     .status-group {
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
       justify-content: flex-end;
     }
@@ -83,10 +91,11 @@
       gap: 8px;
       background: rgba(255,255,255,0.04);
       border: 1px solid var(--line);
-      padding: 10px 14px;
+      padding: 9px 13px;
       border-radius: 999px;
-      font-size: 0.92rem;
+      font-size: 0.88rem;
       color: var(--text);
+      white-space: nowrap;
     }
 
     .dot {
@@ -97,25 +106,43 @@
       box-shadow: 0 0 14px rgba(34,197,94,0.65);
     }
 
-    .grid {
+    .workspace {
+      width: 100%;
       display: grid;
-      grid-template-columns: 1.2fr 1.2fr 0.9fr;
-      gap: 18px;
+      grid-template-columns: minmax(0, 1.45fr) minmax(560px, 1.05fr);
+      gap: var(--gap);
+      align-items: start;
     }
 
-    .col {
+    .visual-column,
+    .sidebar {
       display: grid;
-      gap: 18px;
+      gap: var(--gap);
+      align-content: start;
+      min-width: 0;
+    }
+
+    .two-up {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--gap);
+    }
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--gap);
     }
 
     .card {
       background: linear-gradient(180deg, rgba(24,34,61,0.98), rgba(18,26,47,0.98));
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 18px;
+      padding: 14px;
       box-shadow: var(--shadow);
       position: relative;
       overflow: hidden;
+      min-width: 0;
     }
 
     .card::after {
@@ -130,30 +157,107 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
+      gap: 10px;
     }
 
     .card-title {
-      font-size: 0.95rem;
-      font-weight: 700;
+      font-size: 0.92rem;
+      font-weight: 800;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 1px;
     }
 
     .card-tag {
-      font-size: 0.82rem;
+      font-size: 0.78rem;
       color: var(--accent);
       background: rgba(45,212,191,0.08);
       border: 1px solid rgba(45,212,191,0.18);
-      padding: 6px 10px;
+      padding: 5px 10px;
       border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .camera-wrap {
+      position: relative;
+      width: 100%;
+      height: clamp(360px, 48vh, 500px);
+      min-height: 360px;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #050814;
+    }
+
+    .camera-stream {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+
+    .camera-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(to top, rgba(0,0,0,0.24), transparent 22%),
+        linear-gradient(to bottom, rgba(0,0,0,0.16), transparent 18%);
+    }
+
+    .camera-badge {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(8, 15, 28, 0.74);
+      border: 1px solid rgba(255,255,255,0.10);
+      font-size: 0.82rem;
+      font-weight: 700;
+      backdrop-filter: blur(6px);
+    }
+
+    .camera-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 12px rgba(239,68,68,0.55);
+    }
+
+    .camera-dot.live {
+      background: var(--ok);
+      box-shadow: 0 0 12px rgba(34,197,94,0.55);
+    }
+
+    .camera-footer {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: rgba(8, 15, 28, 0.62);
+      border: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.83rem;
     }
 
     .gauges {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      gap: 10px;
     }
 
     .gauge {
@@ -161,13 +265,14 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      padding: 10px 0 2px;
+      gap: 8px;
+      padding: 4px 0 0;
+      min-width: 0;
     }
 
     .gauge svg {
       width: 100%;
-      max-width: 280px;
+      max-width: 150px;
       height: auto;
       overflow: visible;
     }
@@ -177,32 +282,32 @@
     }
 
     .gauge-name {
-      font-size: 0.92rem;
+      font-size: 0.84rem;
       color: var(--muted);
       margin-bottom: 4px;
+      line-height: 1.1;
     }
 
     .gauge-value {
-      font-size: 2.1rem;
+      font-size: 1.05rem;
       font-weight: 800;
-      line-height: 1;
+      line-height: 1.1;
     }
 
     .gauge-unit {
-      font-size: 0.9rem;
+      font-size: 0.78rem;
       color: var(--muted);
-      margin-left: 4px;
+      margin-left: 3px;
     }
 
     .battery-wrap {
       display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
+      gap: 10px;
     }
 
     .battery-bar {
       width: 100%;
-      height: 26px;
+      height: 20px;
       border-radius: 999px;
       background: rgba(255,255,255,0.06);
       border: 1px solid var(--line);
@@ -227,7 +332,7 @@
     }
 
     .battery-big {
-      font-size: 2.6rem;
+      font-size: 1.5rem;
       font-weight: 800;
       line-height: 1;
     }
@@ -235,66 +340,74 @@
     .substats {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
+      gap: 8px;
     }
 
     .mini {
       background: rgba(255,255,255,0.04);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px;
+      border-radius: 14px;
+      padding: 10px 12px;
+      min-width: 0;
     }
 
     .mini span {
       display: block;
       color: var(--muted);
-      font-size: 0.84rem;
-      margin-bottom: 8px;
+      font-size: 0.78rem;
+      margin-bottom: 6px;
     }
 
     .mini strong {
-      font-size: 1.2rem;
+      font-size: 0.96rem;
+      line-height: 1.15;
+      display: block;
     }
 
     .telemetry-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .main-telemetry {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .telemetry-item {
       background: rgba(255,255,255,0.04);
       border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 14px;
+      border-radius: 14px;
+      padding: 12px;
+      min-width: 0;
     }
 
     .telemetry-item .label {
       color: var(--muted);
-      font-size: 0.85rem;
-      margin-bottom: 8px;
+      font-size: 0.8rem;
+      margin-bottom: 7px;
+      line-height: 1.15;
     }
 
     .telemetry-item .value {
-      font-size: 1.35rem;
+      font-size: 0.98rem;
       font-weight: 800;
+      word-break: break-word;
+      line-height: 1.15;
     }
 
     .telemetry-item .hint {
       color: var(--muted);
-      font-size: 0.8rem;
-      margin-top: 6px;
-    }
-
-    .robot-box {
-      min-height: 320px;
+      font-size: 0.74rem;
+      margin-top: 5px;
+      line-height: 1.15;
     }
 
     .robot-stage {
       position: relative;
       width: 100%;
-      height: 290px;
-      border-radius: 20px;
+      height: 180px;
+      border-radius: 18px;
       background:
         linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)),
         radial-gradient(circle at center, rgba(96,165,250,0.08), transparent 45%),
@@ -309,7 +422,7 @@
       background-image:
         linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
         linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
-      background-size: 36px 36px;
+      background-size: 32px 32px;
       mask-image: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.7));
     }
 
@@ -321,27 +434,28 @@
 
     .robot {
       position: absolute;
-      width: 88px;
-      height: 52px;
+      width: 82px;
+      height: 48px;
       left: 50%;
       top: 50%;
       transform: translate(-50%, -50%) rotate(18deg);
-      transition: transform 0.35s ease;
+      transition: transform 0.2s ease, left 0.2s ease, top 0.2s ease;
+      z-index: 2;
     }
 
     .robot-body {
       position: absolute;
       inset: 8px 10px;
-      border-radius: 16px;
+      border-radius: 14px;
       background: linear-gradient(135deg, var(--accent-2), var(--accent));
-      box-shadow: 0 0 20px rgba(96,165,250,0.35);
+      box-shadow: 0 0 18px rgba(96,165,250,0.35);
     }
 
     .wheel {
       position: absolute;
-      top: 6px;
+      top: 5px;
       width: 10px;
-      height: 40px;
+      height: 38px;
       background: #dbeafe;
       border-radius: 999px;
       opacity: 0.85;
@@ -359,139 +473,175 @@
       height: 0;
       border-top: 7px solid transparent;
       border-bottom: 7px solid transparent;
-      border-left: 12px solid #ffffff;
+      border-left: 11px solid #ffffff;
       filter: drop-shadow(0 0 8px rgba(255,255,255,0.4));
-    }
-
-    .camera-card {
-      min-height: 350px;
-    }
-
-    .camera-wrap {
-      position: relative;
-      width: 100%;
-      height: 320px;
-      border-radius: 20px;
-      overflow: hidden;
-      border: 1px solid var(--line);
-      background: #050814;
-    }
-
-    .camera-stream {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      display: block;
-      background: #000;
-    }
-
-    .camera-overlay {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background:
-        linear-gradient(to top, rgba(0,0,0,0.30), transparent 25%),
-        linear-gradient(to bottom, rgba(0,0,0,0.22), transparent 24%);
-    }
-
-    .camera-badge {
-      position: absolute;
-      top: 14px;
-      left: 14px;
-      z-index: 2;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(8, 15, 28, 0.72);
-      border: 1px solid rgba(255,255,255,0.10);
-      font-size: 0.85rem;
-      font-weight: 700;
-      backdrop-filter: blur(6px);
-    }
-
-    .camera-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--danger);
-      box-shadow: 0 0 12px rgba(239,68,68,0.55);
-    }
-
-    .camera-dot.live {
-      background: var(--ok);
-      box-shadow: 0 0 12px rgba(34,197,94,0.55);
-    }
-
-    .camera-footer {
-      position: absolute;
-      left: 14px;
-      right: 14px;
-      bottom: 14px;
-      z-index: 2;
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      flex-wrap: wrap;
-      padding: 10px 12px;
-      border-radius: 14px;
-      background: rgba(8, 15, 28, 0.62);
-      border: 1px solid rgba(255,255,255,0.08);
-      font-size: 0.88rem;
-    }
-
-    .footer-note {
-      text-align: center;
-      color: var(--muted);
-      font-size: 0.85rem;
-      padding: 6px 0 0;
     }
 
     .small-list {
       display: grid;
-      gap: 10px;
+      gap: 8px;
     }
 
     .rowline {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 10px 12px;
-      border-radius: 14px;
+      gap: 12px;
+      padding: 9px 11px;
+      border-radius: 12px;
       background: rgba(255,255,255,0.04);
       border: 1px solid var(--line);
     }
 
     .rowline span {
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 0.82rem;
+      line-height: 1.15;
     }
 
     .rowline strong {
-      font-size: 1rem;
+      font-size: 0.9rem;
+      text-align: right;
+      word-break: break-word;
+      line-height: 1.15;
+    }
+
+    .footer-note {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.78rem;
+      padding: 8px 0 0;
     }
 
     .config-note {
-      margin-top: 10px;
+      margin-top: 8px;
       color: var(--muted);
-      font-size: 0.82rem;
+      font-size: 0.76rem;
       word-break: break-word;
+      line-height: 1.2;
     }
 
-    @media (max-width: 1180px) {
-      .grid {
+    .map-toolbar {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 6;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .map-btn,
+    .map-zoom-label {
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(8, 15, 28, 0.78);
+      color: var(--text);
+      border-radius: 10px;
+      backdrop-filter: blur(6px);
+    }
+
+    .map-btn {
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 800;
+    }
+
+    .map-btn:hover {
+      background: rgba(18, 26, 47, 0.92);
+    }
+
+    .map-zoom-label {
+      min-width: 64px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 10px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .map-viewport {
+      position: absolute;
+      inset: 0;
+      overflow: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(96,165,250,0.45) rgba(255,255,255,0.05);
+      z-index: 1;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    .map-viewport.dragging {
+      cursor: grabbing;
+    }
+
+    .map-viewport::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    .map-viewport::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05);
+      border-radius: 999px;
+    }
+
+    .map-viewport::-webkit-scrollbar-thumb {
+      background: rgba(96,165,250,0.45);
+      border-radius: 999px;
+    }
+
+    .map-canvas {
+      position: relative;
+      width: 2400px;
+      height: 1800px;
+    }
+
+    .map-canvas .grid-map,
+    .map-canvas .trail {
+      position: absolute;
+      inset: 0;
+    }
+
+    .map-canvas .trail {
+      width: 100%;
+      height: 100%;
+    }
+
+    @media (max-width: 1600px) {
+      .workspace {
+        grid-template-columns: minmax(0, 1.35fr) minmax(500px, 1fr);
+      }
+
+      .main-telemetry {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 1280px) {
+      .workspace {
         grid-template-columns: 1fr;
       }
 
-      .gauges {
-        grid-template-columns: 1fr;
+      .bottom-grid,
+      .two-up,
+      .main-telemetry {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .camera-wrap {
+        height: 380px;
+        min-height: 380px;
       }
     }
 
-    @media (max-width: 720px) {
+    @media (max-width: 920px) {
       body {
-        padding: 12px;
+        padding: 10px;
       }
 
       .topbar {
@@ -503,17 +653,22 @@
         justify-content: flex-start;
       }
 
+      .two-up,
+      .bottom-grid,
       .substats,
-      .telemetry-grid {
+      .telemetry-grid,
+      .main-telemetry,
+      .gauges {
         grid-template-columns: 1fr;
       }
 
-      .battery-big {
-        font-size: 2.1rem;
+      .camera-wrap {
+        height: 300px;
+        min-height: 300px;
       }
 
-      .camera-wrap {
-        height: 240px;
+      .robot-stage {
+        height: 160px;
       }
     }
   </style>
@@ -533,54 +688,178 @@
       </div>
     </section>
 
-    <section class="grid">
-      <div class="col">
-        <article class="card">
+    <section class="workspace">
+      <div class="visual-column">
+        <article class="card camera-card">
           <div class="card-header">
-            <h2 class="card-title">Velocidades</h2>
-            <span class="card-tag">Cinemática</span>
+            <h2 class="card-title">Cámara frontal</h2>
+            <span class="card-tag">Streaming</span>
           </div>
 
-          <div class="gauges">
-            <div class="gauge">
-              <svg viewBox="0 0 240 160" aria-label="Velocidad lineal">
-                <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
-                <path id="linearArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradLinear)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="99"></path>
-                <defs>
-                  <linearGradient id="gradLinear" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stop-color="#2dd4bf"></stop>
-                    <stop offset="100%" stop-color="#60a5fa"></stop>
-                  </linearGradient>
-                </defs>
-                <line id="linearNeedle" x1="120" y1="130" x2="185" y2="95" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
-                <circle cx="120" cy="130" r="9" fill="#fff"></circle>
-              </svg>
-              <div class="gauge-label">
-                <div class="gauge-name">Velocidad lineal</div>
-                <div class="gauge-value"><span id="linearValue">0.00</span><span class="gauge-unit">m/s</span></div>
-              </div>
+          <div class="camera-wrap">
+            <div class="camera-badge">
+              <span class="camera-dot" id="cameraDot"></span>
+              <span id="cameraStatus">Sin señal</span>
             </div>
 
-            <div class="gauge">
-              <svg viewBox="0 0 240 160" aria-label="Velocidad angular">
-                <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
-                <path id="angularArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradAngular)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="160"></path>
-                <defs>
-                  <linearGradient id="gradAngular" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stop-color="#f59e0b"></stop>
-                    <stop offset="100%" stop-color="#ef4444"></stop>
-                  </linearGradient>
-                </defs>
-                <line id="angularNeedle" x1="120" y1="130" x2="152" y2="58" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
-                <circle cx="120" cy="130" r="9" fill="#fff"></circle>
-              </svg>
-              <div class="gauge-label">
-                <div class="gauge-name">Velocidad angular</div>
-                <div class="gauge-value"><span id="angularValue">0.00</span><span class="gauge-unit">rad/s</span></div>
-              </div>
+            <video
+              id="cameraVideo"
+              class="camera-stream"
+              autoplay
+              playsinline
+              muted
+            ></video>
+
+            <div class="camera-overlay"></div>
+
+            <div class="camera-footer">
+              <span id="cameraSource">Fuente: CARLA RGB Front</span>
+              <span id="cameraMeta">Esperando video...</span>
             </div>
           </div>
         </article>
+
+        <article class="card robot-box">
+          <div class="card-header">
+            <h2 class="card-title">Vista de trayectoria</h2>
+            <span class="card-tag">Odometría</span>
+          </div>
+
+          <div class="robot-stage">
+            <div class="map-toolbar">
+              <button class="map-btn" id="zoomOutBtn" type="button">−</button>
+              <div class="map-zoom-label" id="zoomValue">100%</div>
+              <button class="map-btn" id="zoomInBtn" type="button">+</button>
+            </div>
+
+            <div class="map-viewport" id="mapViewport">
+              <div class="map-canvas" id="mapCanvas">
+                <div class="grid-map" id="gridMap"></div>
+
+                <svg class="trail" viewBox="0 0 2400 1800" preserveAspectRatio="none">
+                  <polyline
+                    id="robotPath"
+                    fill="none"
+                    stroke="rgba(45,212,191,0.80)"
+                    stroke-width="5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    points=""
+                  ></polyline>
+
+                  <circle
+                    id="robotCurrentDot"
+                    cx="1200"
+                    cy="900"
+                    r="8"
+                    fill="rgba(96,165,250,0.95)"
+                    stroke="rgba(255,255,255,0.95)"
+                    stroke-width="2"
+                  ></circle>
+                </svg>
+
+                <div class="robot" id="robotVisual">
+                  <div class="wheel left"></div>
+                  <div class="robot-body"></div>
+                  <div class="wheel right"></div>
+                  <div class="nose"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="footer-note">Representación visual del estado estimado del robot.</div>
+        </article>
+      </div>
+
+      <aside class="sidebar">
+        <div class="two-up">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Velocidades</h2>
+              <span class="card-tag">Cinemática</span>
+            </div>
+
+            <div class="gauges">
+              <div class="gauge">
+                <svg viewBox="0 0 240 160" aria-label="Velocidad lineal">
+                  <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
+                  <path id="linearArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradLinear)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="99"></path>
+                  <defs>
+                    <linearGradient id="gradLinear" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#2dd4bf"></stop>
+                      <stop offset="100%" stop-color="#60a5fa"></stop>
+                    </linearGradient>
+                  </defs>
+                  <line id="linearNeedle" x1="120" y1="130" x2="185" y2="95" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
+                  <circle cx="120" cy="130" r="9" fill="#fff"></circle>
+                </svg>
+                <div class="gauge-label">
+                  <div class="gauge-name">Velocidad lineal</div>
+                  <div class="gauge-value"><span id="linearValue">0.00</span><span class="gauge-unit">m/s</span></div>
+                </div>
+              </div>
+
+              <div class="gauge">
+                <svg viewBox="0 0 240 160" aria-label="Velocidad angular">
+                  <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
+                  <path id="angularArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradAngular)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="160"></path>
+                  <defs>
+                    <linearGradient id="gradAngular" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#f59e0b"></stop>
+                      <stop offset="100%" stop-color="#ef4444"></stop>
+                    </linearGradient>
+                  </defs>
+                  <line id="angularNeedle" x1="120" y1="130" x2="152" y2="58" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
+                  <circle cx="120" cy="130" r="9" fill="#fff"></circle>
+                </svg>
+                <div class="gauge-label">
+                  <div class="gauge-name">Velocidad angular</div>
+                  <div class="gauge-value"><span id="angularValue">0.00</span><span class="gauge-unit">rad/s</span></div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Batería</h2>
+              <span class="card-tag">Energía</span>
+            </div>
+
+            <div class="battery-wrap">
+              <div class="battery-row">
+                <div>
+                  <div class="gauge-name">Nivel actual</div>
+                  <div class="battery-big"><span id="batteryPercent">0</span>%</div>
+                </div>
+                <div>
+                  <div class="gauge-name">Autonomía estimada</div>
+                  <div class="battery-big" style="font-size:1.15rem;"><span id="batteryTime">00:00</span> h</div>
+                </div>
+              </div>
+
+              <div class="battery-bar">
+                <div class="battery-fill" id="batteryFill"></div>
+              </div>
+
+              <div class="substats">
+                <div class="mini">
+                  <span>Voltaje</span>
+                  <strong id="batVoltMini">0.0 V</strong>
+                </div>
+                <div class="mini">
+                  <span>Corriente</span>
+                  <strong id="batCurrentMini">0.0 A</strong>
+                </div>
+                <div class="mini">
+                  <span>Temperatura</span>
+                  <strong id="batTempMini">0.0 °C</strong>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
 
         <article class="card">
           <div class="card-header">
@@ -588,7 +867,7 @@
             <span class="card-tag">En vivo</span>
           </div>
 
-          <div class="telemetry-grid">
+          <div class="telemetry-grid main-telemetry">
             <div class="telemetry-item">
               <div class="label">Posición X</div>
               <div class="value" id="posX">0.00 m</div>
@@ -621,153 +900,62 @@
             </div>
           </div>
         </article>
-      </div>
 
-      <div class="col">
-        <article class="card camera-card">
-          <div class="card-header">
-            <h2 class="card-title">Cámara frontal</h2>
-            <span class="card-tag">Streaming</span>
-          </div>
-
-          <div class="camera-wrap">
-            <div class="camera-badge">
-              <span class="camera-dot" id="cameraDot"></span>
-              <span id="cameraStatus">Sin señal</span>
+        <div class="bottom-grid">
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Estado del sistema</h2>
+              <span class="card-tag">Diagnóstico</span>
             </div>
 
-            <img
-              id="cameraStream"
-              class="camera-stream"
-              alt="Streaming CARLA"
-            />
-
-            <div class="camera-overlay"></div>
-
-            <div class="camera-footer">
-              <span id="cameraSource">Fuente: CARLA RGB</span>
-              <span id="cameraMeta">Esperando video...</span>
+            <div class="small-list">
+              <div class="rowline"><span>Corriente total</span><strong id="currentTotal">0.0 A</strong></div>
+              <div class="rowline"><span>Voltaje del pack</span><strong id="batteryVoltage">0.0 V</strong></div>
+              <div class="rowline"><span>Consumo estimado</span><strong id="powerUse">0.0 W</strong></div>
+              <div class="rowline"><span>Latencia de telemetría</span><strong id="latency">0 ms</strong></div>
+              <div class="rowline"><span>Señal de comunicación</span><strong id="signal">0 dBm</strong></div>
+              <div class="rowline"><span>Estado general</span><strong id="health">--</strong></div>
             </div>
-          </div>
-        </article>
+          </article>
 
-        <article class="card robot-box">
-          <div class="card-header">
-            <h2 class="card-title">Vista de trayectoria</h2>
-            <span class="card-tag">Odometría</span>
-          </div>
-
-          <div class="robot-stage">
-            <div class="grid-map"></div>
-            <svg class="trail" viewBox="0 0 600 300" preserveAspectRatio="none">
-              <path d="M60 230 C120 220, 130 160, 200 155 S320 175, 380 130 S500 110, 545 85"
-                    fill="none" stroke="rgba(45,212,191,0.55)" stroke-width="6" stroke-linecap="round" stroke-dasharray="10 8"></path>
-            </svg>
-
-            <div class="robot" id="robotVisual">
-              <div class="wheel left"></div>
-              <div class="robot-body"></div>
-              <div class="wheel right"></div>
-              <div class="nose"></div>
+          <article class="card">
+            <div class="card-header">
+              <h2 class="card-title">Telemetría extendida</h2>
+              <span class="card-tag">Robot</span>
             </div>
-          </div>
 
-          <div class="footer-note">Representación visual del estado estimado del robot.</div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <h2 class="card-title">Estado del sistema</h2>
-            <span class="card-tag">Diagnóstico</span>
-          </div>
-
-          <div class="small-list">
-            <div class="rowline"><span>Corriente total</span><strong id="currentTotal">0.0 A</strong></div>
-            <div class="rowline"><span>Voltaje del pack</span><strong id="batteryVoltage">0.0 V</strong></div>
-            <div class="rowline"><span>Consumo estimado</span><strong id="powerUse">0.0 W</strong></div>
-            <div class="rowline"><span>Latencia de telemetría</span><strong id="latency">0 ms</strong></div>
-            <div class="rowline"><span>Señal de comunicación</span><strong id="signal">0 dBm</strong></div>
-            <div class="rowline"><span>Estado general</span><strong id="health">--</strong></div>
-          </div>
-        </article>
-      </div>
-
-      <div class="col">
-        <article class="card">
-          <div class="card-header">
-            <h2 class="card-title">Batería</h2>
-            <span class="card-tag">Energía</span>
-          </div>
-
-          <div class="battery-wrap">
-            <div class="battery-row">
-              <div>
-                <div class="gauge-name">Nivel actual</div>
-                <div class="battery-big"><span id="batteryPercent">0</span>%</div>
+            <div class="telemetry-grid">
+              <div class="telemetry-item">
+                <div class="label">PWM Izquierdo</div>
+                <div class="value" id="pwmLeft">0 %</div>
               </div>
-              <div>
-                <div class="gauge-name">Autonomía estimada</div>
-                <div class="battery-big" style="font-size:1.5rem;"><span id="batteryTime">00:00</span> h</div>
+              <div class="telemetry-item">
+                <div class="label">PWM Derecho</div>
+                <div class="value" id="pwmRight">0 %</div>
+              </div>
+              <div class="telemetry-item">
+                <div class="label">Encoder Izq.</div>
+                <div class="value" id="encLeft">0</div>
+              </div>
+              <div class="telemetry-item">
+                <div class="label">Encoder Der.</div>
+                <div class="value" id="encRight">0</div>
+              </div>
+              <div class="telemetry-item">
+                <div class="label">Yaw Rate IMU</div>
+                <div class="value" id="imuYawRate">0.00 rad/s</div>
+              </div>
+              <div class="telemetry-item">
+                <div class="label">Errores activos</div>
+                <div class="value" id="errors">0</div>
               </div>
             </div>
 
-            <div class="battery-bar">
-              <div class="battery-fill" id="batteryFill"></div>
-            </div>
-
-            <div class="substats">
-              <div class="mini">
-                <span>Voltaje</span>
-                <strong id="batVoltMini">0.0 V</strong>
-              </div>
-              <div class="mini">
-                <span>Corriente</span>
-                <strong id="batCurrentMini">0.0 A</strong>
-              </div>
-              <div class="mini">
-                <span>Temperatura</span>
-                <strong id="batTempMini">0.0 °C</strong>
-              </div>
-            </div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-header">
-            <h2 class="card-title">Telemetría extendida</h2>
-            <span class="card-tag">Robot</span>
-          </div>
-
-          <div class="telemetry-grid">
-            <div class="telemetry-item">
-              <div class="label">PWM Izquierdo</div>
-              <div class="value" id="pwmLeft">0 %</div>
-            </div>
-            <div class="telemetry-item">
-              <div class="label">PWM Derecho</div>
-              <div class="value" id="pwmRight">0 %</div>
-            </div>
-            <div class="telemetry-item">
-              <div class="label">Encoder Izq.</div>
-              <div class="value" id="encLeft">0</div>
-            </div>
-            <div class="telemetry-item">
-              <div class="label">Encoder Der.</div>
-              <div class="value" id="encRight">0</div>
-            </div>
-            <div class="telemetry-item">
-              <div class="label">Yaw Rate IMU</div>
-              <div class="value" id="imuYawRate">0.00 rad/s</div>
-            </div>
-            <div class="telemetry-item">
-              <div class="label">Errores activos</div>
-              <div class="value" id="errors">0</div>
-            </div>
-          </div>
-          <div class="config-note" id="mqttInfo"></div>
-          <div class="config-note" id="cameraInfo"></div>
-        </article>
-      </div>
+            <div class="config-note" id="mqttInfo"></div>
+            <div class="config-note" id="cameraInfo"></div>
+          </article>
+        </div>
+      </aside>
     </section>
   </main>
 
@@ -790,7 +978,7 @@
     };
 
     const CAMERA_CONFIG = {
-      streamUrl: 'http://192.168.0.222:8080/video_feed',
+      signalingUrl: 'http://192.168.0.222:8081/offer',
       label: 'CARLA RGB Front'
     };
 
@@ -825,9 +1013,306 @@
     };
 
     let lastMessageTs = 0;
+    let cameraPc = null;
+
+    const MAP_BASE_WIDTH = 2400;
+    const MAP_BASE_HEIGHT = 1800;
+    const MAP_SCALE = 1;
+    const MAP_MIN_ZOOM = 0.1;
+    const MAP_MAX_ZOOM = 3;
+    const MAP_ZOOM_STEP = 0.1;
+    const MAX_PATH_POINTS = 2500;
+    const MAP_MIN_MOVE_M = 0.02;
+
+    let mapZoom = 1;
+    let pathWorldPoints = [];
+    let lastStoredWorldPoint = null;
+    let mapOriginWorld = null;
+    let hasCenteredOnFirstPose = false;
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
+    }
+
+    function toFiniteNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function firstFiniteValue(...values) {
+      for (const value of values) {
+        const n = toFiniteNumber(value);
+        if (n !== null) return n;
+      }
+      return null;
+    }
+
+    function normalizeCarlaPayload(payload) {
+      const location =
+        payload.location ||
+        payload.position ||
+        payload.pose?.position ||
+        payload.pose ||
+        payload.transform?.location ||
+        payload.transform?.position ||
+        payload.vehicle?.location ||
+        payload.vehicle?.transform?.location ||
+        payload.odometry?.location ||
+        payload.odometry?.position ||
+        payload.carla?.location ||
+        {};
+
+      const rotation =
+        payload.rotation ||
+        payload.orientation ||
+        payload.pose?.rotation ||
+        payload.transform?.rotation ||
+        payload.vehicle?.rotation ||
+        payload.vehicle?.transform?.rotation ||
+        payload.odometry?.rotation ||
+        payload.carla?.rotation ||
+        {};
+
+      const normalized = { ...payload };
+
+      const posX = firstFiniteValue(
+        payload.posX,
+        payload.x,
+        location.x
+      );
+
+      const posY = firstFiniteValue(
+        payload.posY,
+        payload.y,
+        location.y
+      );
+
+      const headingDeg = firstFiniteValue(
+        payload.headingDeg,
+        payload.heading,
+        payload.yaw,
+        rotation.yaw
+      );
+
+      if (posX !== null) normalized.posX = posX;
+      if (posY !== null) normalized.posY = posY;
+      if (headingDeg !== null) normalized.headingDeg = headingDeg;
+
+      return normalized;
+    }
+
+    function ensureMapOrigin(x, y) {
+      if (!mapOriginWorld) {
+        mapOriginWorld = { x, y };
+      }
+    }
+
+    function worldToMap(x, y) {
+      const originX = mapOriginWorld ? mapOriginWorld.x : x;
+      const originY = mapOriginWorld ? mapOriginWorld.y : y;
+
+      return {
+        px: (MAP_BASE_WIDTH / 2) + ((x - originX) * MAP_SCALE),
+        py: (MAP_BASE_HEIGHT / 2) - ((y - originY) * MAP_SCALE)
+      };
+    }
+
+    function renderPath() {
+      const polyline = document.getElementById('robotPath');
+      if (!polyline) return;
+
+      const points = pathWorldPoints.map((p) => {
+        const mapped = worldToMap(p.x, p.y);
+        return `${mapped.px.toFixed(2)},${mapped.py.toFixed(2)}`;
+      });
+
+      polyline.setAttribute('points', points.join(' '));
+    }
+
+    function updateCurrentDot(x, y) {
+      const dot = document.getElementById('robotCurrentDot');
+      if (!dot) return;
+
+      const mapped = worldToMap(x, y);
+      dot.setAttribute('cx', mapped.px.toFixed(2));
+      dot.setAttribute('cy', mapped.py.toFixed(2));
+    }
+
+    function updateRobotPose(x, y, deg) {
+      const robot = document.getElementById('robotVisual');
+      if (!robot) return;
+
+      const mapped = worldToMap(x, y);
+      robot.style.left = `${mapped.px * mapZoom}px`;
+      robot.style.top = `${mapped.py * mapZoom}px`;
+      robot.style.transform = `translate(-50%, -50%) rotate(${deg}deg) scale(${mapZoom})`;
+    }
+
+    function applyMapZoom() {
+      const mapCanvas = document.getElementById('mapCanvas');
+      const gridMap = document.getElementById('gridMap');
+      const zoomValue = document.getElementById('zoomValue');
+
+      if (!mapCanvas || !gridMap) return;
+
+      mapCanvas.style.width = `${MAP_BASE_WIDTH * mapZoom}px`;
+      mapCanvas.style.height = `${MAP_BASE_HEIGHT * mapZoom}px`;
+      gridMap.style.backgroundSize = `${32 * mapZoom}px ${32 * mapZoom}px`;
+
+      if (zoomValue) {
+        zoomValue.textContent = `${Math.round(mapZoom * 100)}%`;
+      }
+
+      renderPath();
+      updateCurrentDot(
+        Number(dashboardState.posX || 0),
+        Number(dashboardState.posY || 0)
+      );
+      updateRobotPose(
+        Number(dashboardState.posX || 0),
+        Number(dashboardState.posY || 0),
+        Number(dashboardState.headingDeg || 0)
+      );
+    }
+
+    function setMapZoom(nextZoom) {
+      const viewport = document.getElementById('mapViewport');
+      const mapCanvas = document.getElementById('mapCanvas');
+      if (!viewport || !mapCanvas) return;
+
+      const prevWidth = mapCanvas.clientWidth || (MAP_BASE_WIDTH * mapZoom);
+      const prevHeight = mapCanvas.clientHeight || (MAP_BASE_HEIGHT * mapZoom);
+
+      const centerX = viewport.scrollLeft + (viewport.clientWidth / 2);
+      const centerY = viewport.scrollTop + (viewport.clientHeight / 2);
+
+      mapZoom = clamp(nextZoom, MAP_MIN_ZOOM, MAP_MAX_ZOOM);
+      applyMapZoom();
+
+      const newWidth = mapCanvas.clientWidth;
+      const newHeight = mapCanvas.clientHeight;
+
+      viewport.scrollLeft = ((centerX / prevWidth) * newWidth) - (viewport.clientWidth / 2);
+      viewport.scrollTop = ((centerY / prevHeight) * newHeight) - (viewport.clientHeight / 2);
+    }
+
+    function centerMapOnRobot() {
+      const viewport = document.getElementById('mapViewport');
+      if (!viewport) return;
+
+      const mapped = worldToMap(
+        Number(dashboardState.posX || 0),
+        Number(dashboardState.posY || 0)
+      );
+
+      viewport.scrollLeft = (mapped.px * mapZoom) - (viewport.clientWidth / 2);
+      viewport.scrollTop = (mapped.py * mapZoom) - (viewport.clientHeight / 2);
+    }
+
+    function updateMap(x, y, headingDeg) {
+      const fx = toFiniteNumber(x);
+      const fy = toFiniteNumber(y);
+      const fh = toFiniteNumber(headingDeg) ?? 0;
+
+      if (fx === null || fy === null) {
+        return;
+      }
+
+      ensureMapOrigin(fx, fy);
+
+      const current = { x: fx, y: fy };
+
+      if (
+        !lastStoredWorldPoint ||
+        Math.hypot(
+          current.x - lastStoredWorldPoint.x,
+          current.y - lastStoredWorldPoint.y
+        ) >= MAP_MIN_MOVE_M
+      ) {
+        pathWorldPoints.push(current);
+        lastStoredWorldPoint = current;
+      }
+
+      if (pathWorldPoints.length > MAX_PATH_POINTS) {
+        pathWorldPoints.shift();
+      }
+
+      renderPath();
+      updateCurrentDot(current.x, current.y);
+      updateRobotPose(current.x, current.y, fh);
+
+      if (!hasCenteredOnFirstPose) {
+        requestAnimationFrame(() => {
+          centerMapOnRobot();
+        });
+        hasCenteredOnFirstPose = true;
+      }
+    }
+
+    function bindMapControls() {
+      const zoomInBtn = document.getElementById('zoomInBtn');
+      const zoomOutBtn = document.getElementById('zoomOutBtn');
+
+      if (zoomInBtn) {
+        zoomInBtn.addEventListener('click', () => {
+          setMapZoom(mapZoom + MAP_ZOOM_STEP);
+        });
+      }
+
+      if (zoomOutBtn) {
+        zoomOutBtn.addEventListener('click', () => {
+          setMapZoom(mapZoom - MAP_ZOOM_STEP);
+        });
+      }
+    }
+
+    function bindMapPan() {
+      const viewport = document.getElementById('mapViewport');
+      if (!viewport) return;
+
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+      let startScrollLeft = 0;
+      let startScrollTop = 0;
+
+      viewport.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 && e.button !== 1) return;
+        if (e.target.closest('.map-toolbar')) return;
+
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startScrollLeft = viewport.scrollLeft;
+        startScrollTop = viewport.scrollTop;
+
+        viewport.classList.add('dragging');
+        e.preventDefault();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        viewport.scrollLeft = startScrollLeft - dx;
+        viewport.scrollTop = startScrollTop - dy;
+      });
+
+      function stopDragging() {
+        if (!isDragging) return;
+        isDragging = false;
+        viewport.classList.remove('dragging');
+      }
+
+      window.addEventListener('mouseup', stopDragging);
+      window.addEventListener('mouseleave', stopDragging);
+      window.addEventListener('blur', stopDragging);
+
+      viewport.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+      });
     }
 
     function polarToCartesian(cx, cy, r, angleDeg) {
@@ -893,11 +1378,6 @@
       }
     }
 
-    function updateRobotHeading(deg) {
-      const robot = document.getElementById('robotVisual');
-      robot.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
-    }
-
     function render(data) {
       document.getElementById('modeValue').textContent = data.mode;
       document.getElementById('lastUpdate').textContent = `${Number(data.lastUpdateS || 0).toFixed(2)} s`;
@@ -938,7 +1418,11 @@
       document.getElementById('imuYawRate').textContent = `${Number(data.imuYawRate || 0).toFixed(2)} rad/s`;
       document.getElementById('errors').textContent = `${Math.round(Number(data.errors || 0))}`;
 
-      updateRobotHeading(Number(data.headingDeg || 0));
+      updateMap(
+        Number(data.posX || 0),
+        Number(data.posY || 0),
+        Number(data.headingDeg || 0)
+      );
     }
 
     function setDashboardData(newData) {
@@ -1004,7 +1488,8 @@
 
       client.on('message', (topic, message) => {
         try {
-          const payload = JSON.parse(message.toString());
+          let payload = JSON.parse(message.toString());
+          payload = normalizeCarlaPayload(payload);
           payload.connection = true;
 
           const now = performance.now();
@@ -1028,31 +1513,116 @@
       });
     }
 
-    function connectCameraStream() {
-      const img = document.getElementById('cameraStream');
-      document.getElementById('cameraInfo').textContent = `Cámara: ${CAMERA_CONFIG.streamUrl}`;
+    function waitForIceGatheringComplete(peer) {
+      return new Promise((resolve) => {
+        if (peer.iceGatheringState === 'complete') {
+          resolve();
+          return;
+        }
+
+        function checkState() {
+          if (peer.iceGatheringState === 'complete') {
+            peer.removeEventListener('icegatheringstatechange', checkState);
+            resolve();
+          }
+        }
+
+        peer.addEventListener('icegatheringstatechange', checkState);
+      });
+    }
+
+    async function connectCameraStream() {
+      const video = document.getElementById('cameraVideo');
+      document.getElementById('cameraInfo').textContent = `Cámara WebRTC: ${CAMERA_CONFIG.signalingUrl}`;
       document.getElementById('cameraSource').textContent = `Fuente: ${CAMERA_CONFIG.label}`;
 
-      setCameraLive(false, 'Conectando stream...');
+      setCameraLive(false, 'Conectando WebRTC...');
 
-      img.onload = () => {
-        setCameraLive(true, 'MJPEG activo');
+      cameraPc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      });
+
+      cameraPc.addEventListener('icecandidateerror', (event) => {
+        console.error('ICE candidate error:', event);
+      });
+
+      cameraPc.addEventListener('iceconnectionstatechange', () => {
+        console.log('iceConnectionState:', cameraPc.iceConnectionState);
+      });
+
+      cameraPc.addEventListener('icegatheringstatechange', () => {
+        console.log('iceGatheringState:', cameraPc.iceGatheringState);
+      });
+
+      cameraPc.addEventListener('connectionstatechange', () => {
+        const state = cameraPc.connectionState;
+        const iceState = cameraPc.iceConnectionState;
+        const gatherState = cameraPc.iceGatheringState;
+
+        if (state === 'connected') {
+          setCameraLive(true, `state=${state} | ice=${iceState}`);
+        } else if (['failed', 'disconnected', 'closed'].includes(state)) {
+          setCameraLive(false, `state=${state} | ice=${iceState} | gather=${gatherState}`);
+        } else {
+          setCameraLive(false, `state=${state} | ice=${iceState} | gather=${gatherState}`);
+        }
+      });
+
+      cameraPc.ontrack = (event) => {
+        video.srcObject = event.streams[0];
       };
 
-      img.onerror = () => {
-        setCameraLive(false, 'No se pudo cargar el stream');
-        setTimeout(() => {
-          img.src = `${CAMERA_CONFIG.streamUrl}?t=${Date.now()}`;
-        }, 2000);
-      };
+      cameraPc.addTransceiver('video', { direction: 'recvonly' });
 
-      img.src = `${CAMERA_CONFIG.streamUrl}?t=${Date.now()}`;
+      const offer = await cameraPc.createOffer();
+      await cameraPc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(cameraPc);
+
+      const response = await fetch(CAMERA_CONFIG.signalingUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sdp: cameraPc.localDescription.sdp,
+          type: cameraPc.localDescription.type
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} al pedir signaling`);
+      }
+
+      const answer = await response.json();
+      await cameraPc.setRemoteDescription(answer);
     }
 
     window.setDashboardData = setDashboardData;
+    bindMapControls();
+    bindMapPan();
+    applyMapZoom();
     render(dashboardState);
+
+    requestAnimationFrame(() => {
+      centerMapOnRobot();
+    });
+
     connectMqtt();
-    connectCameraStream();
+
+    connectCameraStream().catch((err) => {
+      console.error('Error conectando cámara WebRTC:', err);
+      setCameraLive(false, `Error: ${err.message}`);
+    });
+
+    window.addEventListener('beforeunload', () => {
+      try {
+        if (cameraPc) {
+          cameraPc.close();
+        }
+      } catch (e) {
+        console.warn('Error cerrando peer WebRTC:', e);
+      }
+    });
   </script>
 </body>
 </html>
