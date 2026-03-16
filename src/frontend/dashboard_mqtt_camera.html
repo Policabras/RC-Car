@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Robot Diferencial · MQTT + Cámara</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2f;
+      --panel-2: #18223d;
+      --line: rgba(255,255,255,0.08);
+      --text: #eaf0ff;
+      --muted: #a8b3cf;
+      --accent: #2dd4bf;
+      --accent-2: #60a5fa;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --shadow: 0 18px 50px rgba(0,0,0,0.35);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at top right, rgba(96,165,250,0.14), transparent 28%),
+        radial-gradient(circle at top left, rgba(45,212,191,0.10), transparent 26%),
+        linear-gradient(180deg, #09101d 0%, #0b1020 100%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 22px;
+    }
+
+    .dashboard {
+      max-width: 1480px;
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      background: rgba(18, 26, 47, 0.85);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .title h1 {
+      font-size: clamp(1.2rem, 2vw, 1.8rem);
+      font-weight: 800;
+      letter-spacing: 0.4px;
+    }
+
+    .title p {
+      color: var(--muted);
+      margin-top: 4px;
+      font-size: 0.95rem;
+    }
+
+    .status-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 0.92rem;
+      color: var(--text);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 14px rgba(34,197,94,0.65);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1.2fr 0.9fr;
+      gap: 18px;
+    }
+
+    .col {
+      display: grid;
+      gap: 18px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(24,34,61,0.98), rgba(18,26,47,0.98));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 30%);
+      pointer-events: none;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .card-tag {
+      font-size: 0.82rem;
+      color: var(--accent);
+      background: rgba(45,212,191,0.08);
+      border: 1px solid rgba(45,212,191,0.18);
+      padding: 6px 10px;
+      border-radius: 999px;
+    }
+
+    .gauges {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .gauge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 10px 0 2px;
+    }
+
+    .gauge svg {
+      width: 100%;
+      max-width: 280px;
+      height: auto;
+      overflow: visible;
+    }
+
+    .gauge-label {
+      text-align: center;
+    }
+
+    .gauge-name {
+      font-size: 0.92rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .gauge-value {
+      font-size: 2.1rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .gauge-unit {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin-left: 4px;
+    }
+
+    .battery-wrap {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    .battery-bar {
+      width: 100%;
+      height: 26px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--line);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .battery-fill {
+      height: 100%;
+      width: 68%;
+      background: linear-gradient(90deg, #22c55e, #84cc16, #f59e0b);
+      border-radius: inherit;
+      transition: width 0.35s ease;
+    }
+
+    .battery-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .battery-big {
+      font-size: 2.6rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .substats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .mini {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .mini span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.84rem;
+      margin-bottom: 8px;
+    }
+
+    .mini strong {
+      font-size: 1.2rem;
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .telemetry-item {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .telemetry-item .label {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+
+    .telemetry-item .value {
+      font-size: 1.35rem;
+      font-weight: 800;
+    }
+
+    .telemetry-item .hint {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 6px;
+    }
+
+    .robot-box {
+      min-height: 320px;
+    }
+
+    .robot-stage {
+      position: relative;
+      width: 100%;
+      height: 290px;
+      border-radius: 20px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)),
+        radial-gradient(circle at center, rgba(96,165,250,0.08), transparent 45%),
+        rgba(7,12,24,0.65);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .grid-map {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+      background-size: 36px 36px;
+      mask-image: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.7));
+    }
+
+    .trail {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .robot {
+      position: absolute;
+      width: 88px;
+      height: 52px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) rotate(18deg);
+      transition: transform 0.35s ease;
+    }
+
+    .robot-body {
+      position: absolute;
+      inset: 8px 10px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent-2), var(--accent));
+      box-shadow: 0 0 20px rgba(96,165,250,0.35);
+    }
+
+    .wheel {
+      position: absolute;
+      top: 6px;
+      width: 10px;
+      height: 40px;
+      background: #dbeafe;
+      border-radius: 999px;
+      opacity: 0.85;
+    }
+
+    .wheel.left { left: 0; }
+    .wheel.right { right: 0; }
+
+    .nose {
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-left: 12px solid #ffffff;
+      filter: drop-shadow(0 0 8px rgba(255,255,255,0.4));
+    }
+
+    .camera-card {
+      min-height: 350px;
+    }
+
+    .camera-wrap {
+      position: relative;
+      width: 100%;
+      height: 320px;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #050814;
+    }
+
+    .camera-stream {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: #000;
+    }
+
+    .camera-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(to top, rgba(0,0,0,0.30), transparent 25%),
+        linear-gradient(to bottom, rgba(0,0,0,0.22), transparent 24%);
+    }
+
+    .camera-badge {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(8, 15, 28, 0.72);
+      border: 1px solid rgba(255,255,255,0.10);
+      font-size: 0.85rem;
+      font-weight: 700;
+      backdrop-filter: blur(6px);
+    }
+
+    .camera-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--danger);
+      box-shadow: 0 0 12px rgba(239,68,68,0.55);
+    }
+
+    .camera-dot.live {
+      background: var(--ok);
+      box-shadow: 0 0 12px rgba(34,197,94,0.55);
+    }
+
+    .camera-footer {
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(8, 15, 28, 0.62);
+      border: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.88rem;
+    }
+
+    .footer-note {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding: 6px 0 0;
+    }
+
+    .small-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .rowline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+    }
+
+    .rowline span {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .rowline strong {
+      font-size: 1rem;
+    }
+
+    .config-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      word-break: break-word;
+    }
+
+    @media (max-width: 1180px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .gauges {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 12px;
+      }
+
+      .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .status-group {
+        justify-content: flex-start;
+      }
+
+      .substats,
+      .telemetry-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .battery-big {
+        font-size: 2.1rem;
+      }
+
+      .camera-wrap {
+        height: 240px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="dashboard">
+    <section class="topbar">
+      <div class="title">
+        <h1>Dashboard Automotriz · Robot Diferencial</h1>
+        <p>Monitoreo en tiempo real vía MQTT sobre WebSockets + streaming de cámara</p>
+      </div>
+
+      <div class="status-group">
+        <div class="pill"><span class="dot" id="connDot"></span><span id="connText">Conectando...</span></div>
+        <div class="pill">Modo: <strong id="modeValue">--</strong></div>
+        <div class="pill">Última trama: <strong id="lastUpdate">-- s</strong></div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="col">
+        <article class="card">
+          <div class="card-header">
+            <h2 class="card-title">Velocidades</h2>
+            <span class="card-tag">Cinemática</span>
+          </div>
+
+          <div class="gauges">
+            <div class="gauge">
+              <svg viewBox="0 0 240 160" aria-label="Velocidad lineal">
+                <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
+                <path id="linearArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradLinear)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="99"></path>
+                <defs>
+                  <linearGradient id="gradLinear" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#2dd4bf"></stop>
+                    <stop offset="100%" stop-color="#60a5fa"></stop>
+                  </linearGradient>
+                </defs>
+                <line id="linearNeedle" x1="120" y1="130" x2="185" y2="95" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
+                <circle cx="120" cy="130" r="9" fill="#fff"></circle>
+              </svg>
+              <div class="gauge-label">
+                <div class="gauge-name">Velocidad lineal</div>
+                <div class="gauge-value"><span id="linearValue">0.00</span><span class="gauge-unit">m/s</span></div>
+              </div>
+            </div>
+
+            <div class="gauge">
+              <svg viewBox="0 0 240 160" aria-label="Velocidad angular">
+                <path d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"></path>
+                <path id="angularArc" d="M30 130 A90 90 0 0 1 210 130" fill="none" stroke="url(#gradAngular)" stroke-width="18" stroke-linecap="round" stroke-dasharray="283" stroke-dashoffset="160"></path>
+                <defs>
+                  <linearGradient id="gradAngular" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#f59e0b"></stop>
+                    <stop offset="100%" stop-color="#ef4444"></stop>
+                  </linearGradient>
+                </defs>
+                <line id="angularNeedle" x1="120" y1="130" x2="152" y2="58" stroke="#ffffff" stroke-width="5" stroke-linecap="round"></line>
+                <circle cx="120" cy="130" r="9" fill="#fff"></circle>
+              </svg>
+              <div class="gauge-label">
+                <div class="gauge-name">Velocidad angular</div>
+                <div class="gauge-value"><span id="angularValue">0.00</span><span class="gauge-unit">rad/s</span></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <h2 class="card-title">Telemetría principal</h2>
+            <span class="card-tag">En vivo</span>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="telemetry-item">
+              <div class="label">Posición X</div>
+              <div class="value" id="posX">0.00 m</div>
+              <div class="hint">Odómetro / fusión sensorial</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Posición Y</div>
+              <div class="value" id="posY">0.00 m</div>
+              <div class="hint">Trayectoria estimada</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Orientación θ</div>
+              <div class="value" id="heading">0.0°</div>
+              <div class="hint">Yaw global</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Temperatura MCU</div>
+              <div class="value" id="tempMcu">0.0 °C</div>
+              <div class="hint">Salud electrónica</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Rueda izquierda</div>
+              <div class="value" id="leftWheel">0.00 m/s</div>
+              <div class="hint">Velocidad rueda</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Rueda derecha</div>
+              <div class="value" id="rightWheel">0.00 m/s</div>
+              <div class="hint">Velocidad rueda</div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="col">
+        <article class="card camera-card">
+          <div class="card-header">
+            <h2 class="card-title">Cámara frontal</h2>
+            <span class="card-tag">Streaming</span>
+          </div>
+
+          <div class="camera-wrap">
+            <div class="camera-badge">
+              <span class="camera-dot" id="cameraDot"></span>
+              <span id="cameraStatus">Sin señal</span>
+            </div>
+
+            <img
+              id="cameraStream"
+              class="camera-stream"
+              alt="Streaming CARLA"
+            />
+
+            <div class="camera-overlay"></div>
+
+            <div class="camera-footer">
+              <span id="cameraSource">Fuente: CARLA RGB</span>
+              <span id="cameraMeta">Esperando video...</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card robot-box">
+          <div class="card-header">
+            <h2 class="card-title">Vista de trayectoria</h2>
+            <span class="card-tag">Odometría</span>
+          </div>
+
+          <div class="robot-stage">
+            <div class="grid-map"></div>
+            <svg class="trail" viewBox="0 0 600 300" preserveAspectRatio="none">
+              <path d="M60 230 C120 220, 130 160, 200 155 S320 175, 380 130 S500 110, 545 85"
+                    fill="none" stroke="rgba(45,212,191,0.55)" stroke-width="6" stroke-linecap="round" stroke-dasharray="10 8"></path>
+            </svg>
+
+            <div class="robot" id="robotVisual">
+              <div class="wheel left"></div>
+              <div class="robot-body"></div>
+              <div class="wheel right"></div>
+              <div class="nose"></div>
+            </div>
+          </div>
+
+          <div class="footer-note">Representación visual del estado estimado del robot.</div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <h2 class="card-title">Estado del sistema</h2>
+            <span class="card-tag">Diagnóstico</span>
+          </div>
+
+          <div class="small-list">
+            <div class="rowline"><span>Corriente total</span><strong id="currentTotal">0.0 A</strong></div>
+            <div class="rowline"><span>Voltaje del pack</span><strong id="batteryVoltage">0.0 V</strong></div>
+            <div class="rowline"><span>Consumo estimado</span><strong id="powerUse">0.0 W</strong></div>
+            <div class="rowline"><span>Latencia de telemetría</span><strong id="latency">0 ms</strong></div>
+            <div class="rowline"><span>Señal de comunicación</span><strong id="signal">0 dBm</strong></div>
+            <div class="rowline"><span>Estado general</span><strong id="health">--</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="col">
+        <article class="card">
+          <div class="card-header">
+            <h2 class="card-title">Batería</h2>
+            <span class="card-tag">Energía</span>
+          </div>
+
+          <div class="battery-wrap">
+            <div class="battery-row">
+              <div>
+                <div class="gauge-name">Nivel actual</div>
+                <div class="battery-big"><span id="batteryPercent">0</span>%</div>
+              </div>
+              <div>
+                <div class="gauge-name">Autonomía estimada</div>
+                <div class="battery-big" style="font-size:1.5rem;"><span id="batteryTime">00:00</span> h</div>
+              </div>
+            </div>
+
+            <div class="battery-bar">
+              <div class="battery-fill" id="batteryFill"></div>
+            </div>
+
+            <div class="substats">
+              <div class="mini">
+                <span>Voltaje</span>
+                <strong id="batVoltMini">0.0 V</strong>
+              </div>
+              <div class="mini">
+                <span>Corriente</span>
+                <strong id="batCurrentMini">0.0 A</strong>
+              </div>
+              <div class="mini">
+                <span>Temperatura</span>
+                <strong id="batTempMini">0.0 °C</strong>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <h2 class="card-title">Telemetría extendida</h2>
+            <span class="card-tag">Robot</span>
+          </div>
+
+          <div class="telemetry-grid">
+            <div class="telemetry-item">
+              <div class="label">PWM Izquierdo</div>
+              <div class="value" id="pwmLeft">0 %</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">PWM Derecho</div>
+              <div class="value" id="pwmRight">0 %</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Encoder Izq.</div>
+              <div class="value" id="encLeft">0</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Encoder Der.</div>
+              <div class="value" id="encRight">0</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Yaw Rate IMU</div>
+              <div class="value" id="imuYawRate">0.00 rad/s</div>
+            </div>
+            <div class="telemetry-item">
+              <div class="label">Errores activos</div>
+              <div class="value" id="errors">0</div>
+            </div>
+          </div>
+          <div class="config-note" id="mqttInfo"></div>
+          <div class="config-note" id="cameraInfo"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script>
+    const MQTT_CONFIG = {
+      host: '192.168.0.106',
+      port: 9001,
+      protocol: 'ws',
+      path: '',
+      topic: 'carla/robot01/dashboard',
+      username: '',
+      password: '',
+      clientId: `dashboard_${Math.random().toString(16).slice(2, 10)}`,
+      reconnectPeriod: 2000,
+      connectTimeout: 10000,
+      clean: true,
+      keepalive: 30,
+      protocolVersion: 4
+    };
+
+    const CAMERA_CONFIG = {
+      streamUrl: 'http://192.168.0.222:8080/video_feed',
+      label: 'CARLA RGB Front'
+    };
+
+    const dashboardState = {
+      connection: false,
+      mode: '--',
+      lastUpdateS: 0,
+      linearSpeed: 0,
+      angularSpeed: 0,
+      batteryPercent: 0,
+      batteryTime: '00:00',
+      batteryVoltage: 0,
+      batteryCurrent: 0,
+      batteryTemp: 0,
+      posX: 0,
+      posY: 0,
+      headingDeg: 0,
+      tempMcu: 0,
+      leftWheel: 0,
+      rightWheel: 0,
+      currentTotal: 0,
+      powerUse: 0,
+      latency: 0,
+      signal: 0,
+      health: '--',
+      pwmLeft: 0,
+      pwmRight: 0,
+      encLeft: 0,
+      encRight: 0,
+      imuYawRate: 0,
+      errors: 0
+    };
+
+    let lastMessageTs = 0;
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function polarToCartesian(cx, cy, r, angleDeg) {
+      const angleRad = (Math.PI / 180) * angleDeg;
+      return {
+        x: cx + r * Math.cos(angleRad),
+        y: cy + r * Math.sin(angleRad)
+      };
+    }
+
+    function setNeedle(lineId, value, min, max) {
+      const percent = clamp((value - min) / (max - min), 0, 1);
+      const angle = 180 - (180 * percent);
+      const p = polarToCartesian(120, 130, 74, angle);
+      const line = document.getElementById(lineId);
+      line.setAttribute('x2', p.x.toFixed(1));
+      line.setAttribute('y2', p.y.toFixed(1));
+    }
+
+    function setArc(arcId, value, min, max) {
+      const length = 283;
+      const percent = clamp((value - min) / (max - min), 0, 1);
+      const offset = length * (1 - percent);
+      document.getElementById(arcId).style.strokeDashoffset = offset;
+    }
+
+    function setBattery(percent) {
+      const safe = clamp(percent, 0, 100);
+      const fill = document.getElementById('batteryFill');
+      fill.style.width = `${safe}%`;
+
+      if (safe <= 20) {
+        fill.style.background = 'linear-gradient(90deg, #ef4444, #f97316)';
+      } else if (safe <= 45) {
+        fill.style.background = 'linear-gradient(90deg, #f59e0b, #facc15)';
+      } else {
+        fill.style.background = 'linear-gradient(90deg, #22c55e, #84cc16, #2dd4bf)';
+      }
+    }
+
+    function setConnection(isConnected, message = '') {
+      document.getElementById('connText').textContent = isConnected ? 'Conectado' : (message || 'Desconectado');
+      const dot = document.getElementById('connDot');
+      dot.style.background = isConnected ? 'var(--ok)' : 'var(--danger)';
+      dot.style.boxShadow = isConnected
+        ? '0 0 14px rgba(34,197,94,0.65)'
+        : '0 0 14px rgba(239,68,68,0.65)';
+    }
+
+    function setCameraLive(isLive, meta = '') {
+      const dot = document.getElementById('cameraDot');
+      const status = document.getElementById('cameraStatus');
+      const metaEl = document.getElementById('cameraMeta');
+
+      if (isLive) {
+        dot.classList.add('live');
+        status.textContent = 'En vivo';
+        metaEl.textContent = meta || 'Stream activo';
+      } else {
+        dot.classList.remove('live');
+        status.textContent = 'Sin señal';
+        metaEl.textContent = meta || 'Esperando video...';
+      }
+    }
+
+    function updateRobotHeading(deg) {
+      const robot = document.getElementById('robotVisual');
+      robot.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+    }
+
+    function render(data) {
+      document.getElementById('modeValue').textContent = data.mode;
+      document.getElementById('lastUpdate').textContent = `${Number(data.lastUpdateS || 0).toFixed(2)} s`;
+      setConnection(Boolean(data.connection));
+
+      document.getElementById('linearValue').textContent = Number(data.linearSpeed || 0).toFixed(2);
+      document.getElementById('angularValue').textContent = Number(data.angularSpeed || 0).toFixed(2);
+      setNeedle('linearNeedle', Number(data.linearSpeed || 0), 0, 10.0);
+      setArc('linearArc', Number(data.linearSpeed || 0), 0, 10.0);
+      setNeedle('angularNeedle', Number(data.angularSpeed || 0), -2.0, 2.0);
+      setArc('angularArc', Math.abs(Number(data.angularSpeed || 0)), 0, 2.0);
+
+      document.getElementById('batteryPercent').textContent = Math.round(Number(data.batteryPercent || 0));
+      document.getElementById('batteryTime').textContent = data.batteryTime || '00:00';
+      document.getElementById('batteryVoltage').textContent = `${Number(data.batteryVoltage || 0).toFixed(1)} V`;
+      document.getElementById('batVoltMini').textContent = `${Number(data.batteryVoltage || 0).toFixed(1)} V`;
+      document.getElementById('batCurrentMini').textContent = `${Number(data.batteryCurrent || 0).toFixed(1)} A`;
+      document.getElementById('batTempMini').textContent = `${Number(data.batteryTemp || 0).toFixed(1)} °C`;
+      setBattery(Number(data.batteryPercent || 0));
+
+      document.getElementById('posX').textContent = `${Number(data.posX || 0).toFixed(2)} m`;
+      document.getElementById('posY').textContent = `${Number(data.posY || 0).toFixed(2)} m`;
+      document.getElementById('heading').textContent = `${Number(data.headingDeg || 0).toFixed(1)}°`;
+      document.getElementById('tempMcu').textContent = `${Number(data.tempMcu || 0).toFixed(1)} °C`;
+      document.getElementById('leftWheel').textContent = `${Number(data.leftWheel || 0).toFixed(2)} m/s`;
+      document.getElementById('rightWheel').textContent = `${Number(data.rightWheel || 0).toFixed(2)} m/s`;
+
+      document.getElementById('currentTotal').textContent = `${Number(data.currentTotal || 0).toFixed(1)} A`;
+      document.getElementById('powerUse').textContent = `${Number(data.powerUse || 0).toFixed(1)} W`;
+      document.getElementById('latency').textContent = `${Math.round(Number(data.latency || 0))} ms`;
+      document.getElementById('signal').textContent = `${Math.round(Number(data.signal || 0))} dBm`;
+      document.getElementById('health').textContent = data.health || '--';
+
+      document.getElementById('pwmLeft').textContent = `${Math.round(Number(data.pwmLeft || 0))} %`;
+      document.getElementById('pwmRight').textContent = `${Math.round(Number(data.pwmRight || 0))} %`;
+      document.getElementById('encLeft').textContent = `${Math.round(Number(data.encLeft || 0))}`;
+      document.getElementById('encRight').textContent = `${Math.round(Number(data.encRight || 0))}`;
+      document.getElementById('imuYawRate').textContent = `${Number(data.imuYawRate || 0).toFixed(2)} rad/s`;
+      document.getElementById('errors').textContent = `${Math.round(Number(data.errors || 0))}`;
+
+      updateRobotHeading(Number(data.headingDeg || 0));
+    }
+
+    function setDashboardData(newData) {
+      Object.assign(dashboardState, newData);
+      render(dashboardState);
+    }
+
+    function getBrokerUrl() {
+      const path = MQTT_CONFIG.path ? `/${MQTT_CONFIG.path.replace(/^\/+/, '')}` : '';
+      return `${MQTT_CONFIG.protocol}://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${path}`;
+    }
+
+    function connectMqtt() {
+      const brokerUrl = getBrokerUrl();
+      document.getElementById('mqttInfo').textContent = `Broker: ${brokerUrl} · Topic: ${MQTT_CONFIG.topic}`;
+      setConnection(false, 'Conectando...');
+
+      const options = {
+        clientId: MQTT_CONFIG.clientId,
+        reconnectPeriod: MQTT_CONFIG.reconnectPeriod,
+        connectTimeout: MQTT_CONFIG.connectTimeout,
+        clean: MQTT_CONFIG.clean,
+        keepalive: MQTT_CONFIG.keepalive,
+        protocolVersion: MQTT_CONFIG.protocolVersion
+      };
+
+      if (MQTT_CONFIG.username) options.username = MQTT_CONFIG.username;
+      if (MQTT_CONFIG.password) options.password = MQTT_CONFIG.password;
+
+      const client = mqtt.connect(brokerUrl, options);
+
+      client.on('connect', () => {
+        setConnection(true);
+        client.subscribe(MQTT_CONFIG.topic, { qos: 0 }, (err) => {
+          if (err) {
+            console.error('Error al suscribirse:', err);
+            setConnection(false, 'Error de suscripción');
+            return;
+          }
+          console.log('Suscrito a', MQTT_CONFIG.topic);
+        });
+      });
+
+      client.on('reconnect', () => {
+        setConnection(false, 'Reconectando...');
+        console.warn('Reconectando MQTT...');
+      });
+
+      client.on('close', () => {
+        setConnection(false, 'Socket cerrado');
+        console.warn('Conexión MQTT cerrada');
+      });
+
+      client.on('offline', () => {
+        setConnection(false, 'Offline');
+        console.warn('MQTT offline');
+      });
+
+      client.on('error', (err) => {
+        setConnection(false, 'Error MQTT');
+        console.error('MQTT error:', err);
+      });
+
+      client.on('message', (topic, message) => {
+        try {
+          const payload = JSON.parse(message.toString());
+          payload.connection = true;
+
+          const now = performance.now();
+          if (lastMessageTs > 0 && !payload.lastUpdateS) {
+            payload.lastUpdateS = (now - lastMessageTs) / 1000;
+          }
+          lastMessageTs = now;
+
+          setDashboardData(payload);
+        } catch (err) {
+          console.error('Payload MQTT inválido:', err, message.toString());
+        }
+      });
+
+      window.addEventListener('beforeunload', () => {
+        try {
+          client.end(true);
+        } catch (e) {
+          console.warn('Error cerrando cliente MQTT:', e);
+        }
+      });
+    }
+
+    function connectCameraStream() {
+      const img = document.getElementById('cameraStream');
+      document.getElementById('cameraInfo').textContent = `Cámara: ${CAMERA_CONFIG.streamUrl}`;
+      document.getElementById('cameraSource').textContent = `Fuente: ${CAMERA_CONFIG.label}`;
+
+      setCameraLive(false, 'Conectando stream...');
+
+      img.onload = () => {
+        setCameraLive(true, 'MJPEG activo');
+      };
+
+      img.onerror = () => {
+        setCameraLive(false, 'No se pudo cargar el stream');
+        setTimeout(() => {
+          img.src = `${CAMERA_CONFIG.streamUrl}?t=${Date.now()}`;
+        }, 2000);
+      };
+
+      img.src = `${CAMERA_CONFIG.streamUrl}?t=${Date.now()}`;
+    }
+
+    window.setDashboardData = setDashboardData;
+    render(dashboardState);
+    connectMqtt();
+    connectCameraStream();
+  </script>
+</body>
+</html>
