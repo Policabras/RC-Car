@@ -3,10 +3,7 @@
 
 import time
 import serial
-import os
-import sys
-import signal
-from evdev import InputDevice, list_devices, ecodes, ff
+from evdev import InputDevice, list_devices, ecodes
 
 # =========================================================
 # CONFIG
@@ -35,24 +32,14 @@ DEADZONE_TRIGGER = 0.03
 
 V_MAX = 1000
 W_TANK = 1000
-
-# SHUTDOWN
-BTN_OPTIONS = ecodes.BTN_START
-SHUTDOWN_HOLD = 5.0
+W_MIN_CURVA = 300
 
 # =========================================================
-# GLOBAL EXIT FLAG
+# DEBUG
 # =========================================================
 
-running = True
-
-def handle_exit(sig, frame):
-    global running
-    print("\n[EXIT] Señal recibida, cerrando limpio...")
-    running = False
-
-signal.signal(signal.SIGINT, handle_exit)
-signal.signal(signal.SIGTERM, handle_exit)
+DEBUG = True
+LOOP_STALL_WARN_S = 0.05
 
 # =========================================================
 # UTILS
@@ -75,52 +62,11 @@ def deadzone(x, d):
     return 0.0 if abs(x) < d else x
 
 # =========================================================
-# RUMBLE
-# =========================================================
-
-def setup_rumble(dev):
-    try:
-        if ecodes.EV_FF not in dev.capabilities():
-            print("[RUMBLE] No soportado")
-            return None
-
-        rumble = ff.Rumble(strong_magnitude=0xc000, weak_magnitude=0x8000)
-        effect = ff.Effect(
-            ecodes.FF_RUMBLE,
-            -1,
-            0,
-            ff.Trigger(0, 0),
-            ff.Replay(1000, 0),
-            ff.EffectType(ff_rumble_effect=rumble)
-        )
-
-        effect_id = dev.upload_effect(effect)
-        print(f"[RUMBLE] Effect ID={effect_id}")
-        return effect_id
-    except Exception as e:
-        print(f"[RUMBLE] Error: {e}")
-        return None
-
-def start_rumble(dev, effect_id):
-    if effect_id is not None:
-        try:
-            dev.write(ecodes.EV_FF, effect_id, 1)
-        except Exception:
-            pass
-
-def stop_rumble(dev, effect_id):
-    if effect_id is not None:
-        try:
-            dev.write(ecodes.EV_FF, effect_id, 0)
-        except Exception:
-            pass
-
-# =========================================================
 # UART
 # =========================================================
 
 def open_uart():
-    while running:
+    while True:
         try:
             ser = serial.Serial(UART_PORT, UART_BAUD, timeout=0)
             print(f"[UART] Abierto {UART_PORT} @ {UART_BAUD}")
@@ -129,12 +75,8 @@ def open_uart():
             print(f"[UART] Error abriendo puerto: {e}")
             print("[UART] Reintentando...")
             time.sleep(RETRY_DELAY)
-    return None
 
 def safe_uart_send(ser, msg):
-    if ser is None:
-        return None
-
     try:
         ser.write(msg.encode())
         return ser
@@ -212,24 +154,22 @@ def find_controller():
 def wait_for_controller():
     print("[CONTROL] Buscando control...")
 
-    while running:
+    while True:
         dev = find_controller()
         if dev:
             return dev
         time.sleep(RETRY_DELAY)
-
-    return None
 
 # =========================================================
 # MOVEMENT LOGIC
 # =========================================================
 
 def compute_v_w(lx, l2, r2):
-    # avance/retroceso
     v = int((r2 - l2) * V_MAX)
 
-    # giro completo aunque vayas a tope
-    w = int(lx * W_TANK)
+    throttle = max(l2, r2)
+    w_scale = W_TANK - (W_TANK - W_MIN_CURVA) * throttle
+    w = int(lx * w_scale)
 
     v = clamp(v, -1000, 1000)
     w = clamp(w, -1000, 1000)
@@ -264,16 +204,10 @@ def describe(v, w):
 # =========================================================
 
 def main():
-    global running
-
     ser = open_uart()
-    if ser is None:
-        return
 
-    while running:
+    while True:
         dev = wait_for_controller()
-        if dev is None:
-            break
 
         estado = {
             ABS_X: AXIS_CENTER,
@@ -289,15 +223,6 @@ def main():
         total_events = 0
         total_uart_sent = 0
 
-        # shutdown
-        options_pressed = False
-        options_press_time = 0.0
-        shutdown_triggered = False
-
-        # vibración
-        rumble_effect_id = None
-        rumble_on = False
-
         try:
             try:
                 dev.grab()
@@ -306,20 +231,21 @@ def main():
 
             print(f"[CONTROL] Conectado: {dev.path} ({dev.name})")
 
-            rumble_effect_id = setup_rumble(dev)
-
-            while running:
+            while True:
                 now = time.time()
                 loop_dt = now - last_loop
                 last_loop = now
                 total_loops += 1
+
+                if loop_dt > LOOP_STALL_WARN_S:
+                    print(f"[WARN] Loop lento: {loop_dt*1000:.1f} ms")
 
                 got_events_this_loop = 0
 
                 # =====================================
                 # LECTURA NO BLOQUEANTE CON read_one()
                 # =====================================
-                while running:
+                while True:
                     try:
                         event = dev.read_one()
                     except BlockingIOError:
@@ -339,19 +265,6 @@ def main():
                     if event.type == ecodes.EV_ABS:
                         estado[event.code] = event.value
 
-                    elif event.type == ecodes.EV_KEY:
-                        if event.code == BTN_OPTIONS:
-                            if event.value == 1:  # presionado
-                                options_pressed = True
-                                options_press_time = now
-                                shutdown_triggered = False
-                            elif event.value == 0:  # soltado
-                                options_pressed = False
-                                shutdown_triggered = False
-                                if rumble_on:
-                                    stop_rumble(dev, rumble_effect_id)
-                                    rumble_on = False
-
                 # =====================================
                 # PROCESAMIENTO
                 # =====================================
@@ -365,33 +278,6 @@ def main():
 
                 v, w = compute_v_w(lx, l2, r2)
                 mov = describe(v, w)
-
-                # =====================================
-                # SHUTDOWN + VIBRACION
-                # =====================================
-                if options_pressed:
-                    held = now - options_press_time
-
-                    if not rumble_on:
-                        start_rumble(dev, rumble_effect_id)
-                        rumble_on = True
-
-                    if held >= SHUTDOWN_HOLD and not shutdown_triggered:
-                        shutdown_triggered = True
-                        print("[SYSTEM] APAGANDO RASPBERRY...")
-                        stop_rumble(dev, rumble_effect_id)
-                        rumble_on = False
-
-                        # detener carro antes de apagar
-                        for _ in range(5):
-                            ser = safe_uart_send(ser, "<0,0>\n")
-                            time.sleep(0.02)
-
-                        os.system("sudo shutdown now")
-                else:
-                    if rumble_on:
-                        stop_rumble(dev, rumble_effect_id)
-                        rumble_on = False
 
                 # =====================================
                 # UART SEND PERIODICO
@@ -418,11 +304,6 @@ def main():
 
                 time.sleep(0.001)
 
-        except KeyboardInterrupt:
-            print("\n[EXIT] Ctrl+C detectado, cerrando limpio...")
-            running = False
-            ser = safe_uart_send(ser, "<0,0>\n")
-
         except OSError as e:
             print(f"[CONTROL] OSError real, posible desconexion: {e}")
             ser = safe_uart_send(ser, "<0,0>\n")
@@ -435,28 +316,9 @@ def main():
 
         finally:
             try:
-                stop_rumble(dev, rumble_effect_id)
-            except Exception:
-                pass
-
-            try:
                 dev.ungrab()
             except Exception:
                 pass
-
-    # al salir del while principal
-    try:
-        ser = safe_uart_send(ser, "<0,0>\n")
-    except Exception:
-        pass
-
-    try:
-        if ser is not None:
-            ser.close()
-    except Exception:
-        pass
-
-    print("[EXIT] Programa terminado.")
 
 # =========================================================
 

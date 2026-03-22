@@ -19,7 +19,7 @@ const int LPWM_L = 26;
 const int RPWM_R = 27;
 const int LPWM_R = 14;
 
-// Si quieres usar enables por software, descomenta y ajusta:
+// Enables por software
 const int REN_L = 32;
 const int LEN_L = 33;
 const int REN_R = 18;
@@ -29,7 +29,7 @@ const int LEN_R = 19;
 // PWM CONFIG
 // ==============================
 const int PWM_FREQ = 20000;
-const int PWM_RES = 8;      // 0..255
+const int PWM_RES  = 8;   // 0..255
 
 const int CH_RPWM_L = 0;
 const int CH_LPWM_L = 1;
@@ -39,8 +39,8 @@ const int CH_LPWM_R = 3;
 // ==============================
 // CONTROL
 // ==============================
-int v_cmd = 0;
-int w_cmd = 0;
+int v_cmd = 0;   // avance/retroceso
+int w_cmd = 0;   // giro
 
 unsigned long lastPacketTime = 0;
 const unsigned long FAILSAFE_MS = 300;
@@ -83,16 +83,18 @@ void stopAllMotors() {
   ledcWrite(CH_LPWM_R, 0);
 }
 
+// ==============================
 // Parsear paquetes tipo <123,-456>
+// ==============================
 bool readPacket(int &v, int &w) {
   static String buffer = "";
-  
+
   while (RaspiSerial.available()) {
     char c = (char)RaspiSerial.read();
 
     if (c == '<') {
       buffer = "";
-    } 
+    }
     else if (c == '>') {
       int commaIndex = buffer.indexOf(',');
       if (commaIndex > 0) {
@@ -103,7 +105,7 @@ bool readPacket(int &v, int &w) {
         w = wStr.toInt();
         return true;
       }
-    } 
+    }
     else {
       buffer += c;
     }
@@ -126,16 +128,20 @@ void setupPWM() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("Monitor serial inicializado");
+
   RaspiSerial.begin(UART_BAUD, SERIAL_8N1, RXD2, TXD2);
 
   setupPWM();
   stopAllMotors();
 
-  // Si usas enables por software:
+  // Enables BTS7960
   pinMode(REN_L, OUTPUT); digitalWrite(REN_L, HIGH);
   pinMode(LEN_L, OUTPUT); digitalWrite(LEN_L, HIGH);
   pinMode(REN_R, OUTPUT); digitalWrite(REN_R, HIGH);
   pinMode(LEN_R, OUTPUT); digitalWrite(LEN_R, HIGH);
+
+  lastPacketTime = millis();
 
   Serial.println("ESP32 listo. Esperando paquetes UART...");
 }
@@ -144,8 +150,17 @@ void loop() {
   int newV, newW;
 
   if (readPacket(newV, newW)) {
-    v_cmd = clampInt(newV, -1000, 1000);
-    w_cmd = clampInt(newW, -1000, 1000);
+    // =========================================
+    // CORRECCION DE EJES
+    // newW = avance/retroceso
+    // newV = giro
+    //
+    // Se invierte avance porque estaba al revés
+    // NO se invierte giro porque también estaba al revés
+    // =========================================
+    v_cmd = clampInt(-newW, -1000, 1000);
+    w_cmd = clampInt(newV, -1000, 1000);
+
     lastPacketTime = millis();
 
     // Mezcla diferencial
@@ -159,11 +174,16 @@ void loop() {
     setMotorBTS(CH_RPWM_L, CH_LPWM_L, left);
     setMotorBTS(CH_RPWM_R, CH_LPWM_R, right);
 
-    Serial.print("v=");
+    Serial.print("RAW newV=");
+    Serial.print(newV);
+    Serial.print(" newW=");
+    Serial.print(newW);
+
+    Serial.print(" | v=");
     Serial.print(v_cmd);
     Serial.print(" w=");
     Serial.print(w_cmd);
-    Serial.print(" left=");
+    Serial.print(" | left=");
     Serial.print(left);
     Serial.print(" right=");
     Serial.println(right);

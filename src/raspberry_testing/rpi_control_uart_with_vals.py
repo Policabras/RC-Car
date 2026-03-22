@@ -3,6 +3,7 @@
 
 import time
 import serial
+import select
 from evdev import InputDevice, list_devices, ecodes
 
 # =========================================================
@@ -19,8 +20,9 @@ FORCED_EVENT_PATH = "/dev/input/event4"
 CONTROL_NAME_HINT = "Wireless Controller"
 
 RETRY_DELAY = 2.0
-SEND_INTERVAL = 0.05
+SEND_INTERVAL = 0.02      # 50 Hz
 PRINT_INTERVAL = 0.20
+INPUT_TIMEOUT = 0.12      # si no hay eventos recientes, forzar stop
 
 ABS_X  = ecodes.ABS_X
 ABS_Y  = ecodes.ABS_Y
@@ -61,25 +63,20 @@ def deadzone(x, d):
 # =========================================================
 
 def open_uart():
-
     while True:
         try:
             ser = serial.Serial(UART_PORT, UART_BAUD, timeout=0)
             print(f"[UART] Abierto {UART_PORT} @ {UART_BAUD}")
             return ser
-
         except Exception as e:
             print(f"[UART] Error abriendo puerto: {e}")
             print("[UART] Reintentando...")
             time.sleep(RETRY_DELAY)
 
-
 def safe_uart_send(ser, msg):
-
     try:
         ser.write(msg.encode())
         return ser
-
     except Exception as e:
         print(f"[UART] Error enviando: {e}")
         print("[UART] Reabriendo UART")
@@ -96,7 +93,6 @@ def safe_uart_send(ser, msg):
 # =========================================================
 
 def device_abs_codes(dev):
-
     try:
         caps = dev.capabilities()
         abs_caps = caps.get(ecodes.EV_ABS, [])
@@ -104,9 +100,7 @@ def device_abs_codes(dev):
     except:
         return []
 
-
 def looks_like_main_gamepad(dev):
-
     name = dev.name.lower()
     abs_codes = device_abs_codes(dev)
 
@@ -127,16 +121,12 @@ def looks_like_main_gamepad(dev):
 
     return all(code in abs_codes for code in required)
 
-
 def find_controller():
-
     if FORCED_EVENT_PATH:
-
         try:
             dev = InputDevice(FORCED_EVENT_PATH)
             print(f"[CONTROL] Forzado: {dev.path} ({dev.name})")
             return dev
-
         except Exception as e:
             print(f"[CONTROL] No se pudo abrir {FORCED_EVENT_PATH}: {e}")
             return None
@@ -144,13 +134,10 @@ def find_controller():
     candidates = []
 
     for path in list_devices():
-
         try:
             dev = InputDevice(path)
-
             if looks_like_main_gamepad(dev):
                 candidates.append(dev)
-
         except:
             continue
 
@@ -158,23 +145,16 @@ def find_controller():
         return None
 
     dev = candidates[0]
-
     print(f"[CONTROL] Encontrado: {dev.path} ({dev.name})")
-
     return dev
 
-
 def wait_for_controller():
-
     print("[CONTROL] Buscando control...")
 
     while True:
-
         dev = find_controller()
-
         if dev:
             return dev
-
         time.sleep(RETRY_DELAY)
 
 # =========================================================
@@ -182,7 +162,6 @@ def wait_for_controller():
 # =========================================================
 
 def compute_v_w(lx, l2, r2):
-
     # velocidad lineal
     v = int((r2 - l2) * V_MAX)
 
@@ -199,9 +178,7 @@ def compute_v_w(lx, l2, r2):
 
     return v, w
 
-
 def describe(v, w):
-
     if abs(v) < 50 and abs(w) < 50:
         return "QUIETO"
 
@@ -232,11 +209,9 @@ def describe(v, w):
 # =========================================================
 
 def main():
-
     ser = open_uart()
 
     while True:
-
         dev = wait_for_controller()
 
         estado = {
@@ -245,11 +220,11 @@ def main():
             ABS_RZ: 0
         }
 
-        last_send = 0
-        last_print = 0
+        last_send = 0.0
+        last_print = 0.0
+        last_input = time.time()
 
         try:
-
             try:
                 dev.grab()
             except PermissionError:
@@ -257,45 +232,50 @@ def main():
 
             print(f"[CONTROL] Conectado: {dev.path} ({dev.name})")
 
-            for event in dev.read_loop():
-
-                if event.type == ecodes.EV_ABS:
-                    estado[event.code] = event.value
-
+            while True:
                 now = time.time()
 
+                # Espera corta para revisar si llegaron eventos,
+                # pero sin bloquear el envío periódico
+                rlist, _, _ = select.select([dev.fd], [], [], 0.005)
+
+                if rlist:
+                    for event in dev.read():
+                        if event.type == ecodes.EV_ABS:
+                            estado[event.code] = event.value
+                            last_input = now
+
+                # Normalización
                 lx = normalize_axis(estado.get(ABS_X, AXIS_CENTER))
                 l2 = normalize_trigger(estado.get(ABS_Z, 0))
                 r2 = normalize_trigger(estado.get(ABS_RZ, 0))
 
+                # Deadzones
                 lx = deadzone(lx, DEADZONE_STICK)
-                l2 = 0 if l2 < DEADZONE_TRIGGER else l2
-                r2 = 0 if r2 < DEADZONE_TRIGGER else r2
+                l2 = 0.0 if l2 < DEADZONE_TRIGGER else l2
+                r2 = 0.0 if r2 < DEADZONE_TRIGGER else r2
 
-                v, w = compute_v_w(lx, l2, r2)
+                # Si no hay eventos recientes del control, forzar stop
+                if now - last_input > INPUT_TIMEOUT:
+                    v, w = 0, 0
+                else:
+                    v, w = compute_v_w(lx, l2, r2)
 
                 mov = describe(v, w)
 
                 # ======================
-                # UART SEND
+                # UART SEND PERIODICO
                 # ======================
-
                 if now - last_send >= SEND_INTERVAL:
-
                     last_send = now
-
                     packet = f"<{v},{w}>\n"
-
                     ser = safe_uart_send(ser, packet)
 
                 # ======================
                 # PRINT STATUS
                 # ======================
-
                 if now - last_print >= PRINT_INTERVAL:
-
                     last_print = now
-
                     print(
                         f"v={v:4d} w={w:4d} "
                         f"LX={lx:+.2f} "
@@ -306,20 +286,20 @@ def main():
                     )
 
         except OSError:
-
             print("[CONTROL] Control desconectado")
-
             ser = safe_uart_send(ser, "<0,0>\n")
+            time.sleep(RETRY_DELAY)
 
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            ser = safe_uart_send(ser, "<0,0>\n")
             time.sleep(RETRY_DELAY)
 
         finally:
-
             try:
                 dev.ungrab()
             except:
                 pass
-
 
 # =========================================================
 
