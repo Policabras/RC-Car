@@ -16,14 +16,14 @@ const int RPWM_L = 25;
 const int LPWM_L = 26;
 
 // Motor derecho
-const int RPWM_R = 27;
-const int LPWM_R = 14;
+const int RPWM_R = 12;
+const int LPWM_R = 13;
 
 // Enables por software
 const int REN_L = 32;
 const int LEN_L = 33;
-const int REN_R = 18;
-const int LEN_R = 19;
+const int REN_R = 27;
+const int LEN_R = 14;
 
 // ==============================
 // PWM CONFIG
