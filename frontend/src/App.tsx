@@ -95,14 +95,12 @@ function App() {
   // RESET
   // =========================
   const resetMapa = () => {
-    if (window.confirm("¿Deseas limpiar la trayectoria actual?")) {
-      setPoints([]);
-      setData({ x: 0, y: 0, theta: 0 });
+  setPoints([{ x: data.x, y: data.y }]);
 
-      setNotification("🧹 Mapa reiniciado");
-      setTimeout(() => setNotification(""), 3000);
-    }
-  };
+  setNotification("🧹 Nueva trayectoria iniciada");
+
+  setTimeout(() => setNotification(""), 3000);
+};
 
   // =========================
   // DESCARGAR ZIP
