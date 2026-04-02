@@ -1,35 +1,51 @@
 import time
 import math
 import json
+import serial
 import paho.mqtt.client as mqtt
 
+# --- CONFIGURACIÓN ---
+PORT = "COM10"
+BAUD = 115200
+V = 0.5  # Velocidad (Aumenta esto si no ves movimiento)
+
 client = mqtt.Client()
-client.connect("mosquitto", 1883, 60)
+client.connect("localhost", 1883, 60)
 
-# Waypoints de tu archivo original
-waypoints = [
-    {"x":0, "y":0}, {"x":4, "y":0}, {"x":4, "y":3},
-    {"x":1, "y":5}, {"x":-2, "y":3}, {"x":-3, "y":0},
-    {"x":0, "y":-2}, {"x":0, "y":0}
-]
+try:
+    ser = serial.Serial(PORT, BAUD, timeout=1)
+    print(f"✅ Conectado a ESP32 en {PORT}")
+except Exception as e:
+    print(f"❌ Error: No se pudo abrir {PORT}. ¿Está el Monitor Serie de Arduino abierto?")
+    exit()
 
-x, y, current_target = 0.0, 0.0, 0
-v = 0.1 # Velocidad
+# Posición inicial
+x, y = 0.0, 0.0
+theta = 0.0
 
 while True:
-    target = waypoints[current_target]
-    dx = target["x"] - x
-    dy = target["y"] - y
-    dist = math.sqrt(dx**2 + dy**2)
+    # 1. Leer ángulo real del ESP32
+    if ser.in_waiting:
+        try:
+            line = ser.readline().decode('utf-8').strip()
+            data = json.loads(line)
+            theta = data["theta"]
+        except:
+            continue
 
-    if dist < 0.1:
-        current_target = (current_target + 1) % len(waypoints)
+    # 2. Calcular nueva posición basada en el ángulo real
+    # Si theta cambia, el robot dejará de ir en línea recta
+    x += V * math.cos(theta) * 0.1 # 0.1 por el sleep
+    y += V * math.sin(theta) * 0.1
+
+    # 3. Publicar
+    payload = {
+        "x": round(x, 2),
+        "y": round(y, 2),
+        "theta": theta
+    }
     
-    theta = math.atan2(dy, dx)
-    x += v * math.cos(theta)
-    y += v * math.sin(theta)
-
-    payload = {"x": round(x, 2), "y": round(y, 2), "theta": theta}
     client.publish("robot/position", json.dumps(payload))
-    
+    print(f"Enviando -> X: {payload['x']}, Y: {payload['y']}, Angle: {payload['theta']}")
+
     time.sleep(0.1)
