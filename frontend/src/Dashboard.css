@@ -130,3 +130,48 @@
 }
 
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+.map-card canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.card-header {
+  margin-bottom: 15px;
+}
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.05);
+  padding: 10px 18px;
+  border-radius: 999px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.online {
+  background: #22c55e;
+}
+
+.offline {
+  background: #ef4444;
+}
+
+.secondary {
+  margin-top: 10px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: white;
+}

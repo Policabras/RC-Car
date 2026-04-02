@@ -179,68 +179,104 @@ function App() {
   // UI
   // =========================
   return (
-    <div className="dashboard-container">
-      <header className="topbar">
-        <div className="title">
-          <h1>Control TMR · Estación Base</h1>
+  <div className="dashboard-container">
+    <header className="topbar">
+      <div className="title">
+        <h1>Dashboard Robot Diferencial</h1>
+        <p>Monitoreo en tiempo real · Estación base</p>
 
-          <nav style={{ marginTop: "10px" }}>
-            <button className={`nav-btn ${view === "live" ? "active" : ""}`} onClick={() => setView("live")}>
-              🔴 EN VIVO
-            </button>
-            <button className={`nav-btn ${view === "history" ? "active" : ""}`} onClick={() => setView("history")}>
-              📁 HISTORIAL
-            </button>
-          </nav>
-        </div>
+        <nav style={{ marginTop: "12px" }}>
+          <button
+            className={`nav-btn ${view === "live" ? "active" : ""}`}
+            onClick={() => setView("live")}
+          >
+            🔴 EN VIVO
+          </button>
 
-        <div className="status-pill">
-          <span style={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            display: "inline-block",
-            background: connected ? "#22c55e" : "#ef4444"
-          }}></span>
-          {connected ? " EN LÍNEA" : " DESCONECTADO"}
-        </div>
-      </header>
+          <button
+            className={`nav-btn ${view === "history" ? "active" : ""}`}
+            onClick={() => setView("history")}
+          >
+            📁 HISTORIAL
+          </button>
+        </nav>
+      </div>
 
-      {view === "live" ? (
-        <main className="grid-layout">
-          <section className="card map-card">
+      <div className="status-pill">
+        <span className={`dot ${connected ? "online" : "offline"}`}></span>
+        {connected ? "CONECTADO" : "DESCONECTADO"}
+      </div>
+    </header>
+
+    {view === "live" ? (
+      <main className="dashboard-grid">
+
+        <section className="card map-card">
+          <div className="card-header">
+            <h3>Vista de trayectoria</h3>
+          </div>
+
+          <div className="robot-stage">
+            <div className="grid-bg"></div>
             <canvas ref={canvasRef} width={600} height={400} />
-          </section>
+          </div>
+        </section>
 
-          <section className="card stats-card">
+        <section className="card telemetry-card">
+          <div className="card-header">
             <h3>Telemetría</h3>
+          </div>
 
-            <div>X: {data.x.toFixed(2)}</div>
-            <div>Y: {data.y.toFixed(2)}</div>
-            <div>Yaw: {data.theta.toFixed(1)}°</div>
-            <div>Puntos: {points.length}</div>
-
-            <button onClick={guardarEnHistorial}>💾 Guardar</button>
-            <button onClick={resetMapa}>🧹 Limpiar</button>
-          </section>
-        </main>
-      ) : (
-        <main className="history-view">
-          {history.map(s => (
-            <div key={s.id}>
-              <img src={s.imagen} width="200" />
-              <p>{s.fecha}</p>
-              <button onClick={() => descargarZipDesdeHistorial(s)}>
-                Descargar
-              </button>
+          <div className="telemetry-grid">
+            <div className="stat-item">
+              <span>X</span>
+              <strong>{data.x.toFixed(2)}</strong>
             </div>
-          ))}
-        </main>
-      )}
 
-      {notification && <div>{notification}</div>}
-    </div>
-  );
+            <div className="stat-item">
+              <span>Y</span>
+              <strong>{data.y.toFixed(2)}</strong>
+            </div>
+
+            <div className="stat-item">
+              <span>Yaw</span>
+              <strong>{data.theta.toFixed(1)}°</strong>
+            </div>
+
+            <div className="stat-item">
+              <span>Puntos</span>
+              <strong>{points.length}</strong>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 20 }}>
+            <button className="save-button" onClick={guardarEnHistorial}>
+              💾 Guardar sesión
+            </button>
+
+            <button className="save-button secondary" onClick={resetMapa}>
+              🧹 Limpiar mapa
+            </button>
+          </div>
+        </section>
+      </main>
+    ) : (
+      <main className="history-grid">
+        {history.map((s) => (
+          <div className="card" key={s.id}>
+            <img src={s.imagen} width="100%" />
+            <p>{s.fecha}</p>
+            <button className="save-button" onClick={() => descargarZipDesdeHistorial(s)}>
+              Descargar ZIP
+            </button>
+          </div>
+        ))}
+      </main>
+    )}
+
+    {notification && <div className="toast-notification">{notification}</div>}
+  </div>
+);
 }
 
 export default App;
