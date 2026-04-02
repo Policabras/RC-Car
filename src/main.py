@@ -4,7 +4,6 @@
 import time
 import serial
 import os
-import sys
 import signal
 from evdev import InputDevice, list_devices, ecodes, ff
 
@@ -15,7 +14,6 @@ from evdev import InputDevice, list_devices, ecodes, ff
 UART_PORT = "/dev/serial0"
 UART_BAUD = 115200
 
-# Forzar event correcto
 FORCED_EVENT_PATH = "/dev/input/event4"
 # FORCED_EVENT_PATH = None
 
@@ -23,10 +21,12 @@ RETRY_DELAY = 2.0
 SEND_INTERVAL = 0.02      # 50 Hz
 PRINT_INTERVAL = 0.50
 
-ABS_X  = ecodes.ABS_X
-ABS_Y  = ecodes.ABS_Y
-ABS_Z  = ecodes.ABS_Z
-ABS_RZ = ecodes.ABS_RZ
+ABS_X   = ecodes.ABS_X     # stick izquierdo X
+ABS_Y   = ecodes.ABS_Y
+ABS_RX  = ecodes.ABS_RX    # stick derecho X
+ABS_RY  = ecodes.ABS_RY    # stick derecho Y
+ABS_Z   = ecodes.ABS_Z     # L2
+ABS_RZ  = ecodes.ABS_RZ    # R2
 
 AXIS_CENTER = 128
 
@@ -36,16 +36,20 @@ DEADZONE_TRIGGER = 0.03
 V_MAX = 1000
 W_TANK = 1000
 
-# SHUTDOWN
+# Flippers
+F_MAX = 1000
+INVERT_RY = True   # normalmente arriba en RY da negativo; esto lo corrige
+
+# Shutdown
 BTN_OPTIONS = ecodes.BTN_START
 SHUTDOWN_HOLD = 5.0
 
-# =========================================================
-# GLOBAL EXIT FLAG
-# =========================================================
-
 running = True
 
+
+# =========================================================
+# EXIT
+# =========================================================
 def handle_exit(sig, frame):
     global running
     print("\n[EXIT] Señal recibida, cerrando limpio...")
@@ -54,10 +58,10 @@ def handle_exit(sig, frame):
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)
 
+
 # =========================================================
 # UTILS
 # =========================================================
-
 def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
@@ -74,10 +78,10 @@ def normalize_trigger(value):
 def deadzone(x, d):
     return 0.0 if abs(x) < d else x
 
+
 # =========================================================
 # RUMBLE
 # =========================================================
-
 def setup_rumble(dev):
     try:
         if ecodes.EV_FF not in dev.capabilities():
@@ -115,10 +119,10 @@ def stop_rumble(dev, effect_id):
         except Exception:
             pass
 
+
 # =========================================================
 # UART
 # =========================================================
-
 def open_uart():
     while running:
         try:
@@ -149,10 +153,10 @@ def safe_uart_send(ser, msg):
 
         return open_uart()
 
+
 # =========================================================
 # CONTROL DETECTION
 # =========================================================
-
 def device_abs_codes(dev):
     try:
         caps = dev.capabilities()
@@ -220,21 +224,25 @@ def wait_for_controller():
 
     return None
 
-# =========================================================
-# MOVEMENT LOGIC
-# =========================================================
 
+# =========================================================
+# LOGICA DE MOVIMIENTO
+# =========================================================
 def compute_v_w(lx, l2, r2):
-    # avance/retroceso
     v = int((r2 - l2) * V_MAX)
-
-    # giro completo aunque vayas a tope
     w = int(lx * W_TANK)
 
     v = clamp(v, -1000, 1000)
     w = clamp(w, -1000, 1000)
 
     return v, w
+
+def compute_flipper_cmd(ry):
+    if INVERT_RY:
+        ry = -ry
+
+    f = int(ry * F_MAX)
+    return clamp(f, -1000, 1000)
 
 def describe(v, w):
     if abs(v) < 50 and abs(w) < 50:
@@ -259,10 +267,10 @@ def describe(v, w):
 
     return "MOV"
 
+
 # =========================================================
 # MAIN
 # =========================================================
-
 def main():
     global running
 
@@ -277,24 +285,23 @@ def main():
 
         estado = {
             ABS_X: AXIS_CENTER,
+            ABS_RX: AXIS_CENTER,
+            ABS_RY: AXIS_CENTER,
             ABS_Z: 0,
             ABS_RZ: 0
         }
 
         last_send = 0.0
         last_print = 0.0
-        last_loop = time.time()
 
         total_loops = 0
         total_events = 0
         total_uart_sent = 0
 
-        # shutdown
         options_pressed = False
         options_press_time = 0.0
         shutdown_triggered = False
 
-        # vibración
         rumble_effect_id = None
         rumble_on = False
 
@@ -305,20 +312,13 @@ def main():
                 print("[CONTROL] No se pudo hacer grab(), prueba con sudo")
 
             print(f"[CONTROL] Conectado: {dev.path} ({dev.name})")
-
             rumble_effect_id = setup_rumble(dev)
 
             while running:
                 now = time.time()
-                loop_dt = now - last_loop
-                last_loop = now
                 total_loops += 1
-
                 got_events_this_loop = 0
 
-                # =====================================
-                # LECTURA NO BLOQUEANTE CON read_one()
-                # =====================================
                 while running:
                     try:
                         event = dev.read_one()
@@ -341,34 +341,31 @@ def main():
 
                     elif event.type == ecodes.EV_KEY:
                         if event.code == BTN_OPTIONS:
-                            if event.value == 1:  # presionado
+                            if event.value == 1:
                                 options_pressed = True
                                 options_press_time = now
                                 shutdown_triggered = False
-                            elif event.value == 0:  # soltado
+                            elif event.value == 0:
                                 options_pressed = False
                                 shutdown_triggered = False
                                 if rumble_on:
                                     stop_rumble(dev, rumble_effect_id)
                                     rumble_on = False
 
-                # =====================================
-                # PROCESAMIENTO
-                # =====================================
                 lx = normalize_axis(estado.get(ABS_X, AXIS_CENTER))
+                ry = normalize_axis(estado.get(ABS_RY, AXIS_CENTER))
                 l2 = normalize_trigger(estado.get(ABS_Z, 0))
                 r2 = normalize_trigger(estado.get(ABS_RZ, 0))
 
                 lx = deadzone(lx, DEADZONE_STICK)
+                ry = deadzone(ry, DEADZONE_STICK)
                 l2 = 0.0 if l2 < DEADZONE_TRIGGER else l2
                 r2 = 0.0 if r2 < DEADZONE_TRIGGER else r2
 
                 v, w = compute_v_w(lx, l2, r2)
+                f = compute_flipper_cmd(ry)
                 mov = describe(v, w)
 
-                # =====================================
-                # SHUTDOWN + VIBRACION
-                # =====================================
                 if options_pressed:
                     held = now - options_press_time
 
@@ -382,9 +379,8 @@ def main():
                         stop_rumble(dev, rumble_effect_id)
                         rumble_on = False
 
-                        # detener carro antes de apagar
                         for _ in range(5):
-                            ser = safe_uart_send(ser, "<0,0>\n")
+                            ser = safe_uart_send(ser, "<0,0,0>\n")
                             time.sleep(0.02)
 
                         os.system("sudo shutdown now")
@@ -393,24 +389,18 @@ def main():
                         stop_rumble(dev, rumble_effect_id)
                         rumble_on = False
 
-                # =====================================
-                # UART SEND PERIODICO
-                # =====================================
                 if now - last_send >= SEND_INTERVAL:
                     last_send = now
-                    packet = f"<{v},{w}>\n"
+                    packet = f"<{v},{w},{f}>\n"
                     ser = safe_uart_send(ser, packet)
                     total_uart_sent += 1
 
-                # =====================================
-                # PRINT STATUS
-                # =====================================
                 if now - last_print >= PRINT_INTERVAL:
                     last_print = now
                     print(
                         f"[STAT] "
-                        f"v={v:4d} w={w:4d} "
-                        f"LX={lx:+.2f} L2={l2:.2f} R2={r2:.2f} "
+                        f"v={v:4d} w={w:4d} f={f:4d} "
+                        f"LX={lx:+.2f} RY={ry:+.2f} L2={l2:.2f} R2={r2:.2f} "
                         f"{mov} "
                         f"loops={total_loops} events={total_events} "
                         f"uart={total_uart_sent} got={got_events_this_loop}"
@@ -421,16 +411,16 @@ def main():
         except KeyboardInterrupt:
             print("\n[EXIT] Ctrl+C detectado, cerrando limpio...")
             running = False
-            ser = safe_uart_send(ser, "<0,0>\n")
+            ser = safe_uart_send(ser, "<0,0,0>\n")
 
         except OSError as e:
             print(f"[CONTROL] OSError real, posible desconexion: {e}")
-            ser = safe_uart_send(ser, "<0,0>\n")
+            ser = safe_uart_send(ser, "<0,0,0>\n")
             time.sleep(RETRY_DELAY)
 
         except Exception as e:
             print(f"[ERROR] {e}")
-            ser = safe_uart_send(ser, "<0,0>\n")
+            ser = safe_uart_send(ser, "<0,0,0>\n")
             time.sleep(RETRY_DELAY)
 
         finally:
@@ -444,9 +434,8 @@ def main():
             except Exception:
                 pass
 
-    # al salir del while principal
     try:
-        ser = safe_uart_send(ser, "<0,0>\n")
+        ser = safe_uart_send(ser, "<0,0,0>\n")
     except Exception:
         pass
 
@@ -458,7 +447,6 @@ def main():
 
     print("[EXIT] Programa terminado.")
 
-# =========================================================
 
 if __name__ == "__main__":
     main()
