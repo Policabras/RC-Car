@@ -9,8 +9,9 @@
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "module": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "node",
     "resolveJsonModule": true,
+    "ignoreDeprecations": "5.0",
     "isolatedModules": true,
     "jsx": "react-jsx"
   }

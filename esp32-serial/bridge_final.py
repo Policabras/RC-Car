@@ -21,17 +21,18 @@ client = mqtt.Client()
 
 try:
     client.connect("127.0.0.1", 1883, 60)
-    client.loop_start() # Inicia el hilo de envío de datos
+    client.loop_start()
     print("✅ Conectado al Broker MQTT")
 except Exception as e:
     print(f"❌ Error conectando al Broker: {e}")
-    exit()  # <--- AGREGA ESTO
+    exit()
+
 # -----------------------------
 # VARIABLES DE MOVIMIENTO
 # -----------------------------
 x = 0.0
 y = 0.0
-v = 1.0   # velocidad visible
+v = 1.0
 
 print("🚀 Bridge iniciado...\n")
 
@@ -45,33 +46,26 @@ while True:
         if not line:
             continue
 
-        # Mostrar exactamente lo que llega de ESP32
         print("SERIAL:", line)
 
-        # Convertir JSON
         data = json.loads(line)
 
         theta = float(data["theta"])
-        z = float(data["z"])
 
-        # -----------------------------
-        # MOVIMIENTO
-        # -----------------------------
+        # grados → radianes
+        rad = theta * math.pi / 180
+
         dt = 0.1
 
-        x += v * math.cos(theta) * dt
-        y += v * math.sin(theta) * dt
+        x += v * math.cos(rad) * dt
+        y += v * math.sin(rad) * dt
 
         payload = {
             "x": round(x, 2),
             "y": round(y, 2),
-            "theta": round(theta, 4),
-            "z": round(z, 4)
+            "theta": round(theta, 2)
         }
 
-        # -----------------------------
-        # MQTT
-        # -----------------------------
         client.publish("robot/position", json.dumps(payload))
 
         print("MQTT:", payload)
