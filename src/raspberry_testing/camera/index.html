@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prueba WebRTC Raspberry Camera</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0b1020;
+      color: #eaf0ff;
+      font-family: Arial, sans-serif;
+    }
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .card {
+      background: #121a2f;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.35);
+    }
+    h1 {
+      margin: 0 0 12px;
+    }
+    .top {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    button {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 0;
+      background: #2dd4bf;
+      color: #05131b;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+    video {
+      width: 100%;
+      border-radius: 14px;
+      background: #000;
+      display: block;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+    }
+    .meta {
+      margin-top: 12px;
+      color: #a8b3cf;
+      font-size: 0.95rem;
+      white-space: pre-wrap;
+    }
+    .ok { color: #22c55e; }
+    .bad { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Prueba WebRTC Raspberry Camera</h1>
+
+    <div class="top">
+      <button id="startBtn">Iniciar video</button>
+      <span id="statusText">Esperando conexión...</span>
+    </div>
+
+    <div class="card">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="meta" id="meta">Listo para iniciar.</div>
+    </div>
+  </div>
+
+  <script>
+    const videoEl = document.getElementById("video");
+    const metaEl = document.getElementById("meta");
+    const statusText = document.getElementById("statusText");
+    const startBtn = document.getElementById("startBtn");
+
+    let pc = null;
+
+    function setStatus(text, ok = false) {
+      statusText.textContent = text;
+      statusText.className = ok ? "ok" : "bad";
+    }
+
+    function waitForIceGatheringComplete(peer) {
+      return new Promise((resolve) => {
+        if (peer.iceGatheringState === "complete") {
+          resolve();
+          return;
+        }
+
+        function checkState() {
+          if (peer.iceGatheringState === "complete") {
+            peer.removeEventListener("icegatheringstatechange", checkState);
+            resolve();
+          }
+        }
+
+        peer.addEventListener("icegatheringstatechange", checkState);
+      });
+    }
+
+    async function startWebRTC() {
+      startBtn.disabled = true;
+      setStatus("Conectando...", false);
+      metaEl.textContent = "Creando RTCPeerConnection...";
+
+      pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" }
+        ]
+      });
+
+      pc.addEventListener("icecandidateerror", (event) => {
+        console.error("ICE candidate error:", event);
+      });
+
+      pc.addEventListener("iceconnectionstatechange", () => {
+        console.log("iceConnectionState:", pc.iceConnectionState);
+      });
+
+      pc.addEventListener("icegatheringstatechange", () => {
+        console.log("iceGatheringState:", pc.iceGatheringState);
+      });
+
+      pc.addEventListener("connectionstatechange", () => {
+        const txt =
+          `connection=${pc.connectionState}\n` +
+          `iceConnection=${pc.iceConnectionState}\n` +
+          `iceGathering=${pc.iceGatheringState}`;
+        metaEl.textContent = txt;
+
+        if (pc.connectionState === "connected") {
+          setStatus("Video conectado", true);
+        } else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+          setStatus(`Estado: ${pc.connectionState}`, false);
+        }
+      });
+
+      pc.ontrack = (event) => {
+        videoEl.srcObject = event.streams[0];
+      };
+
+      pc.addTransceiver("video", { direction: "recvonly" });
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(pc);
+
+      const response = await fetch("/offer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sdp: pc.localDescription.sdp,
+          type: pc.localDescription.type
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} al pedir /offer`);
+      }
+
+      const answer = await response.json();
+      await pc.setRemoteDescription(answer);
+
+      setStatus("Oferta enviada. Esperando video...", false);
+    }
+
+    startBtn.addEventListener("click", async () => {
+      try {
+        await startWebRTC();
+      } catch (err) {
+        console.error(err);
+        metaEl.textContent = `Error: ${err.message}`;
+        setStatus("Error de conexión", false);
+        startBtn.disabled = false;
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      if (pc) {
+        pc.close();
+      }
+    });
+  </script>
+</body>
+</html>

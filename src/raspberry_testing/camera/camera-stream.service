@@ -1,0 +1,18 @@
+[Unit]
+Description=Raspberry Camera WebRTC Streaming Service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=charly
+Group=video
+WorkingDirectory=/home/charly/projects/RC-Car/src/raspberry_testing/camera
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/charly/projects/RC-Car/.venv/bin/python /home/charly/projects/RC-Car/src/raspberry_testing/camera/raspberry_cam_streaming.py --device /dev/video0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
