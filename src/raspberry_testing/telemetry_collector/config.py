@@ -3,6 +3,30 @@ from __future__ import annotations
 import os
 import socket
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+def _load_env_file() -> str | None:
+    """
+    Carga variables desde un archivo .env si existe.
+
+    Prioridad:
+    1) .env en el directorio actual
+    2) .env junto a este archivo config.py
+    """
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parent / ".env",
+    ]
+
+    for env_path in candidates:
+        if env_path.exists():
+            load_dotenv(dotenv_path=env_path, override=False)
+            return str(env_path)
+
+    return None
 
 
 def _get_bool(name: str, default: bool) -> bool:
@@ -12,6 +36,13 @@ def _get_bool(name: str, default: bool) -> bool:
 
 def _get_int(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))
+
+
+def _get_list(name: str, default: list[str] | None = None) -> list[str]:
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return default or []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 @dataclass(frozen=True)
@@ -32,6 +63,7 @@ class StorageConfig:
 
 @dataclass(frozen=True)
 class UdpConfig:
+    enabled: bool
     bind_host: str
     bind_port: int
 
@@ -48,6 +80,15 @@ class SystemConfig:
 
 
 @dataclass(frozen=True)
+class SerialConfig:
+    enabled: bool
+    ports: list[str]
+    baudrate: int
+    timeout_ms: int
+    reconnect_delay_ms: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     edge_id: str
     mqtt: MqttConfig
@@ -55,16 +96,20 @@ class AppConfig:
     udp: UdpConfig
     publish: PublishConfig
     system: SystemConfig
+    serial: SerialConfig
     debug: bool
+    env_file: str | None
 
 
 def load_config() -> AppConfig:
+    env_file = _load_env_file()
+
     hostname = socket.gethostname()
     edge_id = os.getenv("EDGE_ID", f"pi_{hostname}")
     client_id = os.getenv("MQTT_CLIENT_ID", f"{edge_id}_collector")
 
     mqtt = MqttConfig(
-        host=os.getenv("MQTT_HOST", "192.168.0.106"),
+        host=os.getenv("MQTT_HOST", "192.168.1.106"),
         port=_get_int("MQTT_PORT", 1883),
         username=os.getenv("MQTT_USERNAME"),
         password=os.getenv("MQTT_PASSWORD"),
@@ -78,6 +123,7 @@ def load_config() -> AppConfig:
     )
 
     udp = UdpConfig(
+        enabled=_get_bool("UDP_ENABLED", True),
         bind_host=os.getenv("UDP_BIND_HOST", "0.0.0.0"),
         bind_port=_get_int("UDP_BIND_PORT", 9100),
     )
@@ -91,6 +137,14 @@ def load_config() -> AppConfig:
         sample_period_ms=_get_int("SYSTEM_SAMPLE_PERIOD_MS", 1000),
     )
 
+    serial_cfg = SerialConfig(
+        enabled=_get_bool("SERIAL_ENABLED", True),
+        ports=_get_list("SERIAL_PORTS", []),
+        baudrate=_get_int("SERIAL_BAUDRATE", 115200),
+        timeout_ms=_get_int("SERIAL_TIMEOUT_MS", 200),
+        reconnect_delay_ms=_get_int("SERIAL_RECONNECT_DELAY_MS", 1500),
+    )
+
     return AppConfig(
         edge_id=edge_id,
         mqtt=mqtt,
@@ -98,5 +152,7 @@ def load_config() -> AppConfig:
         udp=udp,
         publish=publish,
         system=system,
+        serial=serial_cfg,
         debug=_get_bool("DEBUG", False),
+        env_file=env_file,
     )

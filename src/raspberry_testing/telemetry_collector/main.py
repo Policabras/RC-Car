@@ -12,6 +12,7 @@ from ingestors import StoppableThread, SystemIngestor, UDPJsonIngestor
 from models import TelemetryEnvelope
 from mqtt_uplink import MqttUplinkPublisher
 from outbox import SQLiteOutbox
+from serial_ingestors import SerialJsonIngestor
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,19 +67,38 @@ class CollectorApp:
             edge_id=config.edge_id,
             sample_period_ms=config.system.sample_period_ms,
         )
-        self.udp_ingestor = UDPJsonIngestor(
-            emit_fn=self.emit,
-            base_topic=config.mqtt.base_topic,
-            bind_host=config.udp.bind_host,
-            bind_port=config.udp.bind_port,
-        )
+
+        self.udp_ingestor = None
+        if config.udp.enabled:
+            self.udp_ingestor = UDPJsonIngestor(
+                emit_fn=self.emit,
+                base_topic=config.mqtt.base_topic,
+                bind_host=config.udp.bind_host,
+                bind_port=config.udp.bind_port,
+            )
+
+        self.serial_ingestors: list[SerialJsonIngestor] = []
+        if config.serial.enabled and config.serial.ports:
+            self.serial_ingestors = [
+                SerialJsonIngestor(
+                    emit_fn=self.emit,
+                    base_topic=config.mqtt.base_topic,
+                    port=port,
+                    baudrate=config.serial.baudrate,
+                    timeout_s=config.serial.timeout_ms / 1000.0,
+                    reconnect_delay_s=config.serial.reconnect_delay_ms / 1000.0,
+                )
+                for port in config.serial.ports
+            ]
 
         self._workers: list[threading.Thread] = [
             self.persist_worker,
             self.mqtt_uplink,
             self.system_ingestor,
-            self.udp_ingestor,
         ]
+        if self.udp_ingestor is not None:
+            self._workers.append(self.udp_ingestor)
+        self._workers.extend(self.serial_ingestors)
 
     def emit(self, envelope: TelemetryEnvelope) -> None:
         try:
@@ -92,8 +112,17 @@ class CollectorApp:
 
         LOGGER.info("Collector starting with edge_id=%s", self.config.edge_id)
         LOGGER.info("MQTT remote broker: %s:%s", self.config.mqtt.host, self.config.mqtt.port)
-        LOGGER.info("UDP input: %s:%s", self.config.udp.bind_host, self.config.udp.bind_port)
+        LOGGER.info("UDP enabled=%s input=%s:%s", self.config.udp.enabled, self.config.udp.bind_host, self.config.udp.bind_port)
+        LOGGER.info(
+            "Serial enabled=%s ports=%s baudrate=%s",
+            self.config.serial.enabled,
+            self.config.serial.ports,
+            self.config.serial.baudrate,
+        )
         LOGGER.info("SQLite path: %s", self.config.storage.sqlite_path)
+
+        if self.config.serial.enabled and not self.config.serial.ports:
+            LOGGER.warning("Serial ingestion is enabled but SERIAL_PORTS is empty")
 
         for worker in self._workers:
             LOGGER.info("Starting worker=%s", worker.name)
@@ -104,7 +133,12 @@ class CollectorApp:
         self.persist_worker.stop()
         self.mqtt_uplink.stop()
         self.system_ingestor.stop()
-        self.udp_ingestor.stop()
+
+        if self.udp_ingestor is not None:
+            self.udp_ingestor.stop()
+
+        for ingestor in self.serial_ingestors:
+            ingestor.stop()
 
         for worker in self._workers:
             LOGGER.info("Joining worker=%s", worker.name)
