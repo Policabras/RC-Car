@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 import JSZip from "jszip";
 import "./Dashboard.css";
 
@@ -11,64 +11,73 @@ type Sesion = {
   puntos: number;
   imagen: string;
   csv: string;
+  qrs: string[];
 };
 
 function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   const [view, setView] = useState<"live" | "history">("live");
   const [connected, setConnected] = useState(false);
 
-  const [data, setData] = useState({
-    x: 0,
-    y: 0,
-    theta: 0
-  });
+  const [isRecording, setIsRecording] = useState(false);
+  const [clawOpen, setClawOpen] = useState(false);
 
+  const [data, setData] = useState({ x: 0, y: 0, theta: 0 });
   const [points, setPoints] = useState<Punto[]>([]);
   const [history, setHistory] = useState<Sesion[]>([]);
+  const [qrList, setQrList] = useState<string[]>([]);
   const [notification, setNotification] = useState("");
 
-  // =========================
-  // CARGAR HISTORIAL
-  // =========================
   useEffect(() => {
     const saved = localStorage.getItem("robot_history");
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
-  // =========================
-  // SOCKET
-  // =========================
   useEffect(() => {
-  const socket = io("http://localhost:3000", {
-    transports: ["websocket"],
-    upgrade: false
-  });
-
-  socket.on("connect", () => setConnected(true));
-  socket.on("disconnect", () => setConnected(false));
-
-  socket.on("robotData", (newData) => {
-    setData({
-      x: newData.x,
-      y: newData.y,
-      theta: newData.theta
+    const socket = io("http://backend:3000", {
+      transports: ["websocket"],
+      upgrade: false
     });
 
-    setPoints(prev => [...prev, { x: newData.x, y: newData.y }]);
-  });
+    socketRef.current = socket;
 
-  // ✅ ESTO ES LO IMPORTANTE
-  return () => {
-    socket.disconnect();
+    socket.on("connect", () => setConnected(true));
+    socket.on("disconnect", () => setConnected(false));
+
+    socket.on("robotData", (newData) => {
+      setData({
+        x: newData.x,
+        y: newData.y,
+        theta: newData.theta
+      });
+
+      if (isRecording) {
+        setPoints(prev => [...prev, { x: newData.x, y: newData.y }]);
+      }
+    });
+
+    // QR detectados desde backend
+    socket.on("qrDetected", (qr) => {
+      setQrList(prev => [...prev, qr]);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [isRecording]);
+
+  const toggleClaw = () => {
+    const newState = !clawOpen;
+    setClawOpen(newState);
+
+    socketRef.current?.emit("robotCommand", {
+      device: "claw",
+      action: newState ? "open" : "close"
+    });
   };
 
-}, []);
-
-  // =========================
-  // GUARDAR HISTORIAL
-  // =========================
   const guardarEnHistorial = () => {
     const canvas = canvasRef.current;
     if (!canvas || points.length === 0) return;
@@ -80,49 +89,36 @@ function App() {
       fecha: new Date().toLocaleString(),
       puntos: points.length,
       imagen: imagenData,
-      csv: points.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join("\n")
+      csv: points.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join("\n"),
+      qrs: qrList
     };
 
     const nuevoHistorial = [nuevaSesion, ...history];
+
     setHistory(nuevoHistorial);
     localStorage.setItem("robot_history", JSON.stringify(nuevoHistorial));
 
-    setNotification("💾 Ruta guardada");
-    setTimeout(() => setNotification(""), 3000);
+    setNotification("💾 Sesión guardada");
+    setTimeout(() => setNotification(""), 2500);
   };
 
-  // =========================
-  // RESET
-  // =========================
-  const resetMapa = () => {
-  setPoints([{ x: data.x, y: data.y }]);
-
-  setNotification("🧹 Nueva trayectoria iniciada");
-
-  setTimeout(() => setNotification(""), 3000);
-};
-
-  // =========================
-  // DESCARGAR ZIP
-  // =========================
-  const descargarZipDesdeHistorial = async (sesion: Sesion) => {
+  const descargarZip = async (sesion: Sesion) => {
     const zip = new JSZip();
-    const folder = zip.folder(`reporte_${sesion.id}`);
 
-    folder?.file("datos.txt", "X,Y\n" + sesion.csv);
-    folder?.file("mapa.png", sesion.imagen.split(",")[1], { base64: true });
+    zip.file("ruta.csv", sesion.csv);
 
-    const content = await zip.generateAsync({ type: "blob" });
+    sesion.qrs.forEach((qr, i) => {
+      zip.file(`qr_${i + 1}.txt`, qr);
+    });
+
+    const blob = await zip.generateAsync({ type: "blob" });
 
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(content);
-    link.download = `reporte_${sesion.id}.zip`;
+    link.href = URL.createObjectURL(blob);
+    link.download = `sesion_${sesion.id}.zip`;
     link.click();
   };
 
-  // =========================
-  // CANVAS
-  // =========================
   useEffect(() => {
     if (view !== "live") return;
 
@@ -136,12 +132,12 @@ function App() {
 
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
-    const scale = 3;
+    const scale = 5;
 
-    // trayectoria
+    // Trayectoria
     ctx.beginPath();
     ctx.strokeStyle = "#2dd4bf";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2;
 
     points.forEach((p, i) => {
       const x = centerX + p.x * scale;
@@ -153,128 +149,164 @@ function App() {
 
     ctx.stroke();
 
-    // robot
+    // Robot
     const rX = centerX + data.x * scale;
     const rY = centerY - data.y * scale;
 
     ctx.save();
     ctx.translate(rX, rY);
-
-    const thetaRad = (data.theta * Math.PI) / 180;
-    ctx.rotate(-thetaRad);
+    ctx.rotate(-(data.theta * Math.PI) / 180);
 
     ctx.fillStyle = "#60a5fa";
-    ctx.fillRect(-15, -10, 30, 20);
+    ctx.fillRect(-12, -8, 24, 16);
 
     ctx.fillStyle = "white";
-    ctx.fillRect(10, -2, 8, 4);
+    ctx.fillRect(8, -2, 6, 4);
 
     ctx.restore();
 
   }, [points, data, view]);
 
-  // =========================
-  // UI
-  // =========================
   return (
-  <div className="dashboard-container">
-    <header className="topbar">
-      <div className="title">
-        <h1>Dashboard Robot Diferencial</h1>
-        <p>Monitoreo en tiempo real · Estación base</p>
+    <div className="dashboard-container">
+      <header className="topbar">
+        <div className="title">
+          <h1>TMR Control Station</h1>
 
-        <nav style={{ marginTop: "12px" }}>
-          <button
-            className={`nav-btn ${view === "live" ? "active" : ""}`}
-            onClick={() => setView("live")}
-          >
-            🔴 EN VIVO
-          </button>
-
-          <button
-            className={`nav-btn ${view === "history" ? "active" : ""}`}
-            onClick={() => setView("history")}
-          >
-            📁 HISTORIAL
-          </button>
-        </nav>
-      </div>
-
-      <div className="status-pill">
-        <span className={`dot ${connected ? "online" : "offline"}`}></span>
-        {connected ? "CONECTADO" : "DESCONECTADO"}
-      </div>
-    </header>
-
-    {view === "live" ? (
-      <main className="dashboard-grid">
-
-        <section className="card map-card">
-          <div className="card-header">
-            <h3>Vista de trayectoria</h3>
-          </div>
-
-          <div className="robot-stage">
-            <div className="grid-bg"></div>
-            <canvas ref={canvasRef} width={600} height={400} />
-          </div>
-        </section>
-
-        <section className="card telemetry-card">
-          <div className="card-header">
-            <h3>Telemetría</h3>
-          </div>
-
-          <div className="telemetry-grid">
-            <div className="stat-item">
-              <span>X</span>
-              <strong>{data.x.toFixed(2)}</strong>
-            </div>
-
-            <div className="stat-item">
-              <span>Y</span>
-              <strong>{data.y.toFixed(2)}</strong>
-            </div>
-
-            <div className="stat-item">
-              <span>Yaw</span>
-              <strong>{data.theta.toFixed(1)}°</strong>
-            </div>
-
-            <div className="stat-item">
-              <span>Puntos</span>
-              <strong>{points.length}</strong>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 20 }}>
-            <button className="save-button" onClick={guardarEnHistorial}>
-              💾 Guardar sesión
+          <nav style={{ marginTop: "10px" }}>
+            <button
+              className={`nav-btn ${view === "live" ? "active" : ""}`}
+              onClick={() => setView("live")}
+            >
+              EN VIVO
             </button>
 
-            <button className="save-button secondary" onClick={resetMapa}>
-              🧹 Limpiar mapa
+            <button
+              className={`nav-btn ${view === "history" ? "active" : ""}`}
+              onClick={() => setView("history")}
+            >
+              HISTORIAL
             </button>
-          </div>
-        </section>
-      </main>
-    ) : (
-      <main className="history-grid">
-        {history.map((s) => (
-          <div className="card" key={s.id}>
-            <img src={s.imagen} width="100%" />
-            <p>{s.fecha}</p>
-            <button className="save-button" onClick={() => descargarZipDesdeHistorial(s)}>
-              Descargar ZIP
-            </button>
-          </div>
-        ))}
-      </main>
-    )}
+          </nav>
+        </div>
 
-    {notification && <div className="toast-notification">{notification}</div>}
-  </div>
-);
+        <div className="status-pill">
+          <span className={`dot ${connected ? "online" : "offline"}`}></span>
+          {connected ? "CONECTADO" : "DESCONECTADO"}
+        </div>
+      </header>
+
+      {view === "live" ? (
+        <main className="dashboard-grid">
+
+          <div className="visual-section">
+
+            <section className="card camera-card">
+              <div className="card-header">
+                <h3>Cámara en Tiempo Real</h3>
+              </div>
+
+              <div className="camera-container">
+                <img
+                  src="http://host.docker.internal:5000/video_feed"
+                  alt="Transmisión"
+                  style={{ width: "100%" }}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src =
+                      "http://localhost:5000/video_feed";
+                  }}
+                />
+              </div>
+            </section>
+
+            <section className="card map-card">
+              <div className="card-header">
+                <h3>Vista de trayectoria</h3>
+              </div>
+
+              <div className="robot-stage">
+                <div className="grid-bg"></div>
+                <canvas ref={canvasRef} width={600} height={400} />
+              </div>
+            </section>
+
+          </div>
+
+          <aside className="telemetry-card card">
+
+            <div className="card-header">
+              <h3>Panel de Control</h3>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+
+              <button
+                className="save-button"
+                onClick={() => setIsRecording(!isRecording)}
+                style={{
+                  backgroundColor: isRecording ? "#ef4444" : "#22c55e"
+                }}
+              >
+                {isRecording ? "⏹ DETENER" : "▶ INICIAR"}
+              </button>
+
+              <button
+                className="save-button"
+                onClick={toggleClaw}
+                style={{
+                  backgroundColor: clawOpen ? "#f59e0b" : "#3b82f6"
+                }}
+              >
+                {clawOpen ? "🦾 CERRAR GARRA" : "👐 ABRIR GARRA"}
+              </button>
+
+            </div>
+
+            <div className="telemetry-grid">
+              <div className="stat-item"><span>X</span><strong>{data.x.toFixed(2)}</strong></div>
+              <div className="stat-item"><span>Y</span><strong>{data.y.toFixed(2)}</strong></div>
+              <div className="stat-item"><span>Yaw</span><strong>{data.theta.toFixed(1)}°</strong></div>
+              <div className="stat-item"><span>Puntos</span><strong>{points.length}</strong></div>
+            </div>
+
+            <div style={{ marginTop: 20, display: "flex", gap: "10px" }}>
+              <button className="save-button secondary" onClick={guardarEnHistorial}>
+                💾 Guardar
+              </button>
+
+              <button className="save-button secondary" onClick={() => setPoints([])}>
+                🧹 Limpiar
+              </button>
+            </div>
+
+          </aside>
+
+        </main>
+      ) : (
+        <main className="history-grid">
+          {history.map((s) => (
+            <div className="card" key={s.id}>
+              <img src={s.imagen} width="100%" alt="Ruta" />
+              <p>{s.fecha}</p>
+
+              <button
+                className="save-button"
+                onClick={() => descargarZip(s)}
+              >
+                Descargar ZIP
+              </button>
+            </div>
+          ))}
+        </main>
+      )}
+
+      {notification && (
+        <div className="toast-notification">
+          {notification}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default App;
