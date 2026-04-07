@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+*.png
+src/raspberry_testing/camera/qr/qr_data
+
 .env
 *db
 *db-shm

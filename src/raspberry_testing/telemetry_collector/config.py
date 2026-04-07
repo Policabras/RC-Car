@@ -89,6 +89,21 @@ class SerialConfig:
 
 
 @dataclass(frozen=True)
+class QrConfig:
+    enabled: bool
+    stream_url: str
+    device_id: str
+    stream_name: str
+    sample_period_ms: int
+    decode_width: int
+    decode_height: int
+    dedup_window_ms: int
+    save_detections: bool
+    storage_dir: str
+    reconnect_delay_ms: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     edge_id: str
     mqtt: MqttConfig
@@ -97,6 +112,7 @@ class AppConfig:
     publish: PublishConfig
     system: SystemConfig
     serial: SerialConfig
+    qr: QrConfig
     debug: bool
     env_file: str | None
 
@@ -145,6 +161,20 @@ def load_config() -> AppConfig:
         reconnect_delay_ms=_get_int("SERIAL_RECONNECT_DELAY_MS", 1500),
     )
 
+    qr_cfg = QrConfig(
+        enabled=_get_bool("QR_ENABLED", False),
+        stream_url=os.getenv("QR_STREAM_URL", ""),
+        device_id=os.getenv("QR_DEVICE_ID", edge_id),
+        stream_name=os.getenv("QR_STREAM_NAME", "qr_scan"),
+        sample_period_ms=_get_int("QR_SAMPLE_PERIOD_MS", 100),
+        decode_width=_get_int("QR_DECODE_WIDTH", 320),
+        decode_height=_get_int("QR_DECODE_HEIGHT", 240),
+        dedup_window_ms=_get_int("QR_DEDUP_WINDOW_MS", 3000),
+        save_detections=_get_bool("QR_SAVE_DETECTIONS", False),
+        storage_dir=os.getenv("QR_STORAGE_DIR", "./qr_data"),
+        reconnect_delay_ms=_get_int("QR_RECONNECT_DELAY_MS", 1500),
+    )
+
     return AppConfig(
         edge_id=edge_id,
         mqtt=mqtt,
@@ -153,6 +183,7 @@ def load_config() -> AppConfig:
         publish=publish,
         system=system,
         serial=serial_cfg,
+        qr=qr_cfg,
         debug=_get_bool("DEBUG", False),
         env_file=env_file,
     )

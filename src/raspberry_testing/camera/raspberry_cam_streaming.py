@@ -16,10 +16,11 @@ from av import VideoFrame
 HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 8081
 
-CAMERA_DEVICE = "/dev/video0" 
+CAMERA_DEVICE = "/dev/video0"
 IMAGE_W = 640
 IMAGE_H = 480
 CAMERA_FPS = 20
+JPEG_QUALITY = 80
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -115,8 +116,9 @@ def setup_camera(device):
     print("       fps        =", camera_cap.get(cv2.CAP_PROP_FPS))
     print("       buffersize =", camera_cap.get(cv2.CAP_PROP_BUFFERSIZE))
 
-    print(f"[HTTP] Backend WebRTC en http://{HTTP_HOST}:{HTTP_PORT}")
-    print("[HTTP] En tu red local abre: http://IP_DE_TU_RASPBERRY:8081")
+    print(f"[HTTP] Backend disponible en http://{HTTP_HOST}:{HTTP_PORT}")
+    print("[HTTP] WebRTC:  http://IP_DE_TU_RASPBERRY:8081")
+    print("[HTTP] MJPEG:   http://IP_DE_TU_RASPBERRY:8081/mjpeg")
 
 
 def cleanup():
@@ -208,7 +210,7 @@ async def offer(request):
         params = await request.json()
         print("[WebRTC] /offer recibido")
 
-        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+        remote_offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
         pc = RTCPeerConnection()
         pcs.add(pc)
 
@@ -221,7 +223,7 @@ async def offer(request):
                 await pc.close()
                 pcs.discard(pc)
 
-        await pc.setRemoteDescription(offer)
+        await pc.setRemoteDescription(remote_offer)
         pc.addTrack(RaspberryCameraTrack())
 
         answer = await pc.createAnswer()
@@ -247,6 +249,57 @@ async def offer_options(request):
     return web.Response(status=200)
 
 
+async def mjpeg_stream(request):
+    response = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "multipart/x-mixed-replace; boundary=frame",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+    await response.prepare(request)
+
+    try:
+        while True:
+            with frame_lock:
+                if latest_frame is not None:
+                    frame = latest_frame.copy()
+                else:
+                    frame = create_placeholder_frame(
+                        IMAGE_W, IMAGE_H, "Esperando cámara..."
+                    )
+
+            ok, buffer = cv2.imencode(
+                ".jpg",
+                frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY],
+            )
+
+            if ok:
+                await response.write(b"--frame\r\n")
+                await response.write(b"Content-Type: image/jpeg\r\n\r\n")
+                await response.write(buffer.tobytes())
+                await response.write(b"\r\n")
+
+            await asyncio.sleep(1.0 / CAMERA_FPS if CAMERA_FPS > 0 else 0.05)
+
+    except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+        pass
+    except Exception as e:
+        print(f"[MJPEG] Error: {e}")
+    finally:
+        try:
+            await response.write_eof()
+        except Exception:
+            pass
+
+    return response
+
+
 async def on_shutdown(app):
     coros = [pc.close() for pc in pcs]
     if coros:
@@ -270,6 +323,7 @@ def main():
     app.router.add_get("/health", health)
     app.router.add_post("/offer", offer)
     app.router.add_options("/offer", offer_options)
+    app.router.add_get("/mjpeg", mjpeg_stream)
 
     web.run_app(app, host=args.host, port=args.port)
 

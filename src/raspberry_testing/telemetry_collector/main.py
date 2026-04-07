@@ -12,6 +12,7 @@ from ingestors import StoppableThread, SystemIngestor, UDPJsonIngestor
 from models import TelemetryEnvelope
 from mqtt_uplink import MqttUplinkPublisher
 from outbox import SQLiteOutbox
+from qr_ingestor import QrCodeIngestor
 from serial_ingestors import SerialJsonIngestor
 
 LOGGER = logging.getLogger(__name__)
@@ -91,6 +92,14 @@ class CollectorApp:
                 for port in config.serial.ports
             ]
 
+        self.qr_ingestor = None
+        if config.qr.enabled:
+            self.qr_ingestor = QrCodeIngestor(
+                emit_fn=self.emit,
+                base_topic=config.mqtt.base_topic,
+                config=config.qr,
+            )
+
         self._workers: list[threading.Thread] = [
             self.persist_worker,
             self.mqtt_uplink,
@@ -99,6 +108,8 @@ class CollectorApp:
         if self.udp_ingestor is not None:
             self._workers.append(self.udp_ingestor)
         self._workers.extend(self.serial_ingestors)
+        if self.qr_ingestor is not None:
+            self._workers.append(self.qr_ingestor)
 
     def emit(self, envelope: TelemetryEnvelope) -> None:
         try:
@@ -119,10 +130,18 @@ class CollectorApp:
             self.config.serial.ports,
             self.config.serial.baudrate,
         )
+        LOGGER.info(
+            "QR enabled=%s stream_url=%s stream_name=%s",
+            self.config.qr.enabled,
+            self.config.qr.stream_url,
+            self.config.qr.stream_name,
+        )
         LOGGER.info("SQLite path: %s", self.config.storage.sqlite_path)
 
         if self.config.serial.enabled and not self.config.serial.ports:
             LOGGER.warning("Serial ingestion is enabled but SERIAL_PORTS is empty")
+        if self.config.qr.enabled and not self.config.qr.stream_url:
+            LOGGER.warning("QR ingestion is enabled but QR_STREAM_URL is empty")
 
         for worker in self._workers:
             LOGGER.info("Starting worker=%s", worker.name)
@@ -139,6 +158,9 @@ class CollectorApp:
 
         for ingestor in self.serial_ingestors:
             ingestor.stop()
+
+        if self.qr_ingestor is not None:
+            self.qr_ingestor.stop()
 
         for worker in self._workers:
             LOGGER.info("Joining worker=%s", worker.name)
