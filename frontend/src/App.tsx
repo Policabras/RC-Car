@@ -36,7 +36,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const socket = io("http://backend:3000", {
+    const socket = io("http://localhost:3000", {
       transports: ["websocket"],
       upgrade: false
     });
@@ -59,8 +59,9 @@ function App() {
     });
 
     // QR detectados desde backend
-    socket.on("qrDetected", (qr) => {
-      setQrList(prev => [...prev, qr]);
+    socket.on("qrData", (data) => {
+      console.log("QR detectado:", data.qr);
+      setQrList(prev => [...prev, data.qr]);
     });
 
     return () => {
@@ -208,7 +209,7 @@ function App() {
 
               <div className="camera-container">
                 <img
-                  src="http://host.docker.internal:5000/video_feed"
+                  src="http://192.168.0.22:5000/video_feed"
                   alt="Transmisión"
                   style={{ width: "100%" }}
                   onError={(e) => {

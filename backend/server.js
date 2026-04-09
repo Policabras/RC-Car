@@ -37,6 +37,11 @@ mqttClient.on("connect", () => {
       console.log("📡 Suscrito al tópico: robot/position");
     }
   });
+  mqttClient.subscribe("robot/qr", (err) => {
+    if (!err) {
+      console.log("📡 Suscrito al tópico: robot/qr");
+    }
+  });
 });
 
 // ==========================
@@ -44,6 +49,7 @@ mqttClient.on("connect", () => {
 // ==========================
 mqttClient.on("message", (topic, message) => {
   try {
+    if (topic === "robot/position") {
     // Parseamos el JSON que viene del bridge_final.py
     const raw = JSON.parse(message.toString());
 
@@ -67,6 +73,14 @@ mqttClient.on("message", (topic, message) => {
 
     // Enviamos los datos al Frontend en tiempo real
     io.emit("robotData", data);
+    }
+    if (topic === "robot/qr") {
+      console.log("QR recibido:", message.toString());
+
+      io.emit("qrData", {
+        qr: message.toString()
+      });
+    }
 
   } catch (e) {
     console.error("❌ Error al procesar JSON de MQTT:", e.message);

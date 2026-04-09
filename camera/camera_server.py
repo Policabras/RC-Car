@@ -3,11 +3,28 @@ import os
 from datetime import datetime
 from flask import Flask, Response
 from flask_cors import CORS
+import paho.mqtt.client as mqtt
 
+# ==========================
+# MQTT
+# ==========================
+MQTT_BROKER = "IP_DE_TU_PC"   # cambia por la IP de tu computadora
+MQTT_PORT = 1883
+MQTT_TOPIC = "robot/qr"
+
+client = mqtt.Client()
+client.connect(MQTT_BROKER, MQTT_PORT, 60)
+
+# ==========================
+# FLASK
+# ==========================
 app = Flask(__name__)
 CORS(app)
 
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+# ==========================
+# CÁMARA
+# ==========================
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
 detector = cv2.QRCodeDetector()
@@ -16,6 +33,9 @@ os.makedirs("qr_data", exist_ok=True)
 
 last_qr = ""
 
+# ==========================
+# STREAM + QR
+# ==========================
 def gen_frames():
     global last_qr
 
@@ -63,6 +83,9 @@ def gen_frames():
 
                         print(f"QR guardado: {data}")
 
+                        # MQTT publish
+                        client.publish(MQTT_TOPIC, data)
+
         ret, buffer = cv2.imencode('.jpg', frame)
 
         if not ret:
@@ -73,10 +96,16 @@ def gen_frames():
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
+# ==========================
+# VIDEO ROUTE
+# ==========================
 @app.route('/video_feed')
 def video_feed():
     return Response(gen_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+# ==========================
+# MAIN
+# ==========================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, threaded=True)
