@@ -7,6 +7,7 @@ from typing import Callable
 
 import serial
 
+from command_state import ThreadSafeCommandState
 from ingestors import StoppableThread
 from models import TelemetryEnvelope, build_envelope, now_ms
 
@@ -14,7 +15,7 @@ LOGGER = logging.getLogger(__name__)
 EmitFn = Callable[[TelemetryEnvelope], None]
 
 
-class SerialJsonIngestor(StoppableThread):
+class RobotSerialBridge(StoppableThread):
     RESERVED_FIELDS = {
         "device_id",
         "stream",
@@ -31,19 +32,25 @@ class SerialJsonIngestor(StoppableThread):
         self,
         *,
         emit_fn: EmitFn,
+        command_state: ThreadSafeCommandState,
         base_topic: str,
         port: str,
         baudrate: int = 115200,
-        timeout_s: float = 0.2,
+        timeout_s: float = 0.05,
         reconnect_delay_s: float = 1.5,
+        tx_period_s: float = 0.05,
+        command_timeout_ms: int = 300,
     ) -> None:
-        super().__init__(name=f"serial_ingestor[{port}]")
+        super().__init__(name=f"robot_serial_bridge[{port}]")
         self.emit_fn = emit_fn
+        self.command_state = command_state
         self.base_topic = base_topic
         self.port = port
         self.baudrate = baudrate
         self.timeout_s = timeout_s
         self.reconnect_delay_s = reconnect_delay_s
+        self.tx_period_s = tx_period_s
+        self.command_timeout_ms = command_timeout_ms
 
     def _line_to_envelope(self, line: str) -> TelemetryEnvelope:
         msg = json.loads(line)
@@ -80,9 +87,11 @@ class SerialJsonIngestor(StoppableThread):
 
     def run(self) -> None:
         LOGGER.info(
-            "SerialJsonIngestor starting on port=%s baudrate=%s",
+            "RobotSerialBridge starting port=%s baudrate=%s tx_period_s=%.3f command_timeout_ms=%s",
             self.port,
             self.baudrate,
+            self.tx_period_s,
+            self.command_timeout_ms,
         )
 
         while not self.stopped():
@@ -93,9 +102,19 @@ class SerialJsonIngestor(StoppableThread):
                     timeout=self.timeout_s,
                     write_timeout=1.0,
                 ) as ser:
-                    LOGGER.info("Serial connected: %s", self.port)
+                    LOGGER.info("Robot serial connected: %s", self.port)
+                    next_tx = time.monotonic()
 
                     while not self.stopped():
+                        now = time.monotonic()
+                        if now >= next_tx:
+                            packet = self.command_state.to_serial_packet(
+                                timeout_ms=self.command_timeout_ms,
+                            )
+                            ser.write(packet)
+                            LOGGER.debug("Robot UART TX port=%s packet=%r", self.port, packet)
+                            next_tx = now + self.tx_period_s
+
                         raw = ser.readline()
                         if not raw:
                             continue
@@ -116,24 +135,24 @@ class SerialJsonIngestor(StoppableThread):
                             envelope = self._line_to_envelope(line)
                             self.emit_fn(envelope)
                             LOGGER.debug(
-                                "Serial telemetry accepted port=%s topic=%s",
+                                "Robot UART RX accepted port=%s topic=%s",
                                 self.port,
                                 envelope.topic,
                             )
                         except Exception as exc:
                             LOGGER.exception(
-                                "Invalid JSON line on %s. Error=%s line=%r",
+                                "Invalid robot serial JSON on %s error=%s line=%r",
                                 self.port,
                                 exc,
                                 line[:500],
                             )
 
             except serial.SerialException as exc:
-                LOGGER.warning("Serial disconnected/unavailable on %s: %s", self.port, exc)
+                LOGGER.warning("Robot serial disconnected on %s: %s", self.port, exc)
             except Exception as exc:
-                LOGGER.exception("Unexpected serial error on %s: %s", self.port, exc)
+                LOGGER.exception("Unexpected robot serial error on %s: %s", self.port, exc)
 
             if not self.stopped():
                 time.sleep(self.reconnect_delay_s)
 
-        LOGGER.info("SerialJsonIngestor stopped: %s", self.port)
+        LOGGER.info("RobotSerialBridge stopped: %s", self.port)

@@ -1,77 +1,203 @@
-# ESP32 differential odometry sender (serial -> Raspberry)
+# ESP32 + Arduino CLI en Raspberry Pi
 
-Este proyecto genera **odometría simulada** de un robot diferencial en una ESP32 y la envía por **serial** (una línea JSON por muestra) a la Raspberry.
+## Descripción
 
-La idea es que la Raspberry lea el puerto `/dev/ttyUSB*` o `/dev/ttyACM*` y meta cada línea al telemetry collector que ya tienes.
+Este proyecto utiliza Arduino CLI para compilar y subir código a un ESP32 desde una Raspberry Pi, permitiendo automatizar el flujo de desarrollo sin necesidad del entorno gráfico.
 
-## Qué simula
+---
 
-- cinemática de robot diferencial
-- encoders en cuadratura **X4** (mediante cuantización a `ENCODER_CPR_X4`)
-- gyro Z tipo **MPU-9250** con bias y ruido
-- fusión simple encoder + gyro para estimar `theta` y `wz`
+## Requisitos
 
-## Formato enviado
+* Raspberry Pi con Linux
+* Conexión a internet
+* ESP32
+* Cable USB con soporte de datos
 
-Cada muestra sale así:
+---
 
-```json
-{"device_id":"robot_r1","stream":"odom","sample_period_ms":20,"qos":0,"retain":false,"ts_source_ms":1712345678901,"seq":25,"payload":{"x":0.123456,"y":0.000000,"theta":0.010000,"vx":0.250000,"wz":0.000000,"left_ticks_delta":35,"right_ticks_delta":35,"gyro_z_dps":0.170000,"true_v":0.250000,"true_wz":0.000000}}
-```
-
-Eso coincide con el formato que espera tu collector serial JSON.
-
-## Archivos
-
-- `main/app_config.h`: parámetros del robot, encoder e IMU simulada
-- `main/sim_robot.*`: genera la “verdad” del robot y las mediciones simuladas
-- `main/odom_estimator.*`: estima odometría con encoder + gyro
-- `main/serial_json.*`: empaqueta y manda por stdout
-- `main/main.c`: loop principal a periodo fijo
-
-## Build
+## Instalación de Arduino CLI
 
 ```bash
-idf.py set-target esp32
-idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
 ```
 
-> Cambia `/dev/ttyUSB0` por tu puerto real.
-
-## Integración con la Raspberry
-
-En la Raspberry puedes ver el JSON con:
+Verificar instalación:
 
 ```bash
-cat /dev/ttyUSB0
+arduino-cli version
 ```
 
-O con Python:
+---
+
+## Configuración inicial
+
+Inicializar configuración:
 
 ```bash
-python -m serial.tools.miniterm /dev/ttyUSB0 115200
+arduino-cli config init
 ```
 
-Y en tu collector:
+Editar archivo de configuración:
 
 ```bash
-SERIAL_PORTS=/dev/ttyUSB0
-SERIAL_BAUDRATE=115200
+nano ~/.arduino15/arduino-cli.yaml
 ```
 
-## Próximo paso natural
+Agregar:
 
-Cuando quieras pasar de simulado a real:
+```yaml
+board_manager:
+  additional_urls:
+    - https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+```
 
-1. sustituye `sim_robot_step()` por lectura real de encoders y del gyro
-2. deja intactos `odom_update()` y `serial_json_send_odom()`
-3. si tu IMU trae drift fuerte, agrega calibración al arranque
+---
 
-## Nota honesta
+## Instalación del core ESP32
 
-Este proyecto **simula** encoders e IMU; no está leyendo todavía el MPU-9250 real ni el PCNT real del encoder. Está hecho así para que primero cierres el flujo:
+```bash
+arduino-cli core update-index
+arduino-cli core install esp32:esp32@2.0.17
+```
 
-ESP32 -> serial -> Raspberry -> collector -> broker MQTT
+---
 
-Luego cambias la capa de adquisición sin tocar el formato de salida.
+## Instalación de librerías necesarias
+
+```bash
+arduino-cli lib install "Adafruit PWM Servo Driver Library"
+arduino-cli lib install "Adafruit BusIO"
+```
+
+---
+
+## Verificación de conexión del ESP32
+
+```bash
+arduino-cli board list
+```
+
+Ejemplo de salida:
+
+```
+/dev/ttyUSB0
+```
+
+---
+
+## Compilación del proyecto
+
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32 ruta/del/proyecto
+```
+
+---
+
+## Subida de código al ESP32
+
+```bash
+arduino-cli upload \
+  -p /dev/ttyUSB0 \
+  --fqbn esp32:esp32:esp32 \
+  --upload-property upload.speed=115200 \
+  ruta/del/proyecto
+```
+
+---
+
+## Uso de script automatizado
+
+El proyecto incluye un script para automatizar la compilación y carga del firmware.
+
+### Ubicación
+
+El archivo se encuentra dentro del proyecto:
+
+```
+odometry_esp32_thing/upload_esp32.sh
+```
+
+---
+
+### Permisos de ejecución
+
+```bash
+chmod +x odometry_esp32_thing/upload_esp32.sh
+```
+
+---
+
+### Ejecución del script
+
+Desde la raíz del proyecto:
+
+```bash
+./odometry_esp32_thing/upload_esp32.sh
+```
+
+---
+
+## Permisos de acceso al puerto serial
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+Se requiere reiniciar sesión después de ejecutar este comando.
+
+---
+
+## Problemas comunes
+
+### Librerías faltantes
+
+Instalar la librería requerida con:
+
+```bash
+arduino-cli lib install "Nombre Libreria"
+```
+
+---
+
+### Error: chip stopped responding
+
+Posibles causas:
+
+* Cable USB defectuoso
+* Energía insuficiente
+* Puerto serial en uso por otro proceso
+* Velocidad de carga elevada
+
+---
+
+### Recomendación
+
+Utilizar una velocidad de carga de 115200:
+
+```bash
+--upload-property upload.speed=115200
+```
+
+---
+
+## Depuración de puerto serial
+
+```bash
+dmesg | grep tty
+```
+
+---
+
+## Flujo de trabajo recomendado
+
+1. Compilar el proyecto
+2. Subir el código al dispositivo
+3. Validar comportamiento en el hardware
+
+---
+
+## Nota
+
+Para proyectos más avanzados se recomienda automatizar el flujo mediante scripts y considerar actualizaciones OTA para evitar dependencia de conexión física.
+
+---

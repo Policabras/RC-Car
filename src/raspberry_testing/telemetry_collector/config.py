@@ -9,13 +9,6 @@ from dotenv import load_dotenv
 
 
 def _load_env_file() -> str | None:
-    """
-    Carga variables desde un archivo .env si existe.
-
-    Prioridad:
-    1) .env en el directorio actual
-    2) .env junto a este archivo config.py
-    """
     candidates = [
         Path.cwd() / ".env",
         Path(__file__).resolve().parent / ".env",
@@ -89,18 +82,15 @@ class SerialConfig:
 
 
 @dataclass(frozen=True)
-class QrConfig:
+class RobotControlConfig:
     enabled: bool
-    stream_url: str
-    device_id: str
-    stream_name: str
-    sample_period_ms: int
-    decode_width: int
-    decode_height: int
-    dedup_window_ms: int
-    save_detections: bool
-    storage_dir: str
+    port: str
+    baudrate: int
+    timeout_ms: int
     reconnect_delay_ms: int
+    tx_period_ms: int
+    command_timeout_ms: int
+    command_topic: str
 
 
 @dataclass(frozen=True)
@@ -112,7 +102,7 @@ class AppConfig:
     publish: PublishConfig
     system: SystemConfig
     serial: SerialConfig
-    qr: QrConfig
+    robot_control: RobotControlConfig
     debug: bool
     env_file: str | None
 
@@ -161,18 +151,20 @@ def load_config() -> AppConfig:
         reconnect_delay_ms=_get_int("SERIAL_RECONNECT_DELAY_MS", 1500),
     )
 
-    qr_cfg = QrConfig(
-        enabled=_get_bool("QR_ENABLED", False),
-        stream_url=os.getenv("QR_STREAM_URL", ""),
-        device_id=os.getenv("QR_DEVICE_ID", edge_id),
-        stream_name=os.getenv("QR_STREAM_NAME", "qr_scan"),
-        sample_period_ms=_get_int("QR_SAMPLE_PERIOD_MS", 100),
-        decode_width=_get_int("QR_DECODE_WIDTH", 320),
-        decode_height=_get_int("QR_DECODE_HEIGHT", 240),
-        dedup_window_ms=_get_int("QR_DEDUP_WINDOW_MS", 3000),
-        save_detections=_get_bool("QR_SAVE_DETECTIONS", False),
-        storage_dir=os.getenv("QR_STORAGE_DIR", "./qr_data"),
-        reconnect_delay_ms=_get_int("QR_RECONNECT_DELAY_MS", 1500),
+    robot_command_topic = os.getenv(
+        "ROBOT_COMMAND_TOPIC",
+        f"{mqtt.base_topic}/{edge_id}/cmd",
+    )
+
+    robot_control = RobotControlConfig(
+        enabled=_get_bool("ROBOT_CONTROL_ENABLED", False),
+        port=os.getenv("ROBOT_SERIAL_PORT", "/dev/ttyUSB0"),
+        baudrate=_get_int("ROBOT_SERIAL_BAUDRATE", 115200),
+        timeout_ms=_get_int("ROBOT_SERIAL_TIMEOUT_MS", 50),
+        reconnect_delay_ms=_get_int("ROBOT_SERIAL_RECONNECT_DELAY_MS", 1500),
+        tx_period_ms=_get_int("ROBOT_TX_PERIOD_MS", 50),
+        command_timeout_ms=_get_int("ROBOT_COMMAND_TIMEOUT_MS", 300),
+        command_topic=robot_command_topic,
     )
 
     return AppConfig(
@@ -183,7 +175,7 @@ def load_config() -> AppConfig:
         publish=publish,
         system=system,
         serial=serial_cfg,
-        qr=qr_cfg,
+        robot_control=robot_control,
         debug=_get_bool("DEBUG", False),
         env_file=env_file,
     )

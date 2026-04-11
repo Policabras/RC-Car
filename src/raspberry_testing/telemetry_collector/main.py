@@ -7,12 +7,14 @@ import sys
 import threading
 import time
 
+from command_state import ThreadSafeCommandState
 from config import AppConfig, load_config
 from ingestors import StoppableThread, SystemIngestor, UDPJsonIngestor
 from models import TelemetryEnvelope
+from mqtt_commands import MqttCommandSubscriber
 from mqtt_uplink import MqttUplinkPublisher
 from outbox import SQLiteOutbox
-from qr_ingestor import QrCodeIngestor
+from robot_serial_bridge import RobotSerialBridge
 from serial_ingestors import SerialJsonIngestor
 
 LOGGER = logging.getLogger(__name__)
@@ -33,12 +35,6 @@ class PersistWorker(StoppableThread):
                 continue
 
             try:
-                LOGGER.debug(
-                    "Persisting envelope topic=%s qos=%s retain=%s",
-                    envelope.topic,
-                    envelope.qos,
-                    envelope.retain,
-                )
                 self.outbox.enqueue(
                     topic=envelope.topic,
                     payload_json=envelope.to_json(),
@@ -78,8 +74,38 @@ class CollectorApp:
                 bind_port=config.udp.bind_port,
             )
 
+        serial_ports = list(config.serial.ports)
+        self.command_state = None
+        self.mqtt_commands = None
+        self.robot_bridge = None
+
+        if config.robot_control.enabled:
+            self.command_state = ThreadSafeCommandState()
+            self.mqtt_commands = MqttCommandSubscriber(
+                config=config,
+                command_state=self.command_state,
+            )
+            self.robot_bridge = RobotSerialBridge(
+                emit_fn=self.emit,
+                command_state=self.command_state,
+                base_topic=config.mqtt.base_topic,
+                port=config.robot_control.port,
+                baudrate=config.robot_control.baudrate,
+                timeout_s=config.robot_control.timeout_ms / 1000.0,
+                reconnect_delay_s=config.robot_control.reconnect_delay_ms / 1000.0,
+                tx_period_s=config.robot_control.tx_period_ms / 1000.0,
+                command_timeout_ms=config.robot_control.command_timeout_ms,
+            )
+
+            if config.robot_control.port in serial_ports:
+                LOGGER.warning(
+                    "Removing robot control port %s from SERIAL_PORTS to avoid double-open conflicts",
+                    config.robot_control.port,
+                )
+                serial_ports = [p for p in serial_ports if p != config.robot_control.port]
+
         self.serial_ingestors: list[SerialJsonIngestor] = []
-        if config.serial.enabled and config.serial.ports:
+        if config.serial.enabled and serial_ports:
             self.serial_ingestors = [
                 SerialJsonIngestor(
                     emit_fn=self.emit,
@@ -89,16 +115,8 @@ class CollectorApp:
                     timeout_s=config.serial.timeout_ms / 1000.0,
                     reconnect_delay_s=config.serial.reconnect_delay_ms / 1000.0,
                 )
-                for port in config.serial.ports
+                for port in serial_ports
             ]
-
-        self.qr_ingestor = None
-        if config.qr.enabled:
-            self.qr_ingestor = QrCodeIngestor(
-                emit_fn=self.emit,
-                base_topic=config.mqtt.base_topic,
-                config=config.qr,
-            )
 
         self._workers: list[threading.Thread] = [
             self.persist_worker,
@@ -107,9 +125,11 @@ class CollectorApp:
         ]
         if self.udp_ingestor is not None:
             self._workers.append(self.udp_ingestor)
+        if self.mqtt_commands is not None:
+            self._workers.append(self.mqtt_commands)
+        if self.robot_bridge is not None:
+            self._workers.append(self.robot_bridge)
         self._workers.extend(self.serial_ingestors)
-        if self.qr_ingestor is not None:
-            self._workers.append(self.qr_ingestor)
 
     def emit(self, envelope: TelemetryEnvelope) -> None:
         try:
@@ -123,7 +143,12 @@ class CollectorApp:
 
         LOGGER.info("Collector starting with edge_id=%s", self.config.edge_id)
         LOGGER.info("MQTT remote broker: %s:%s", self.config.mqtt.host, self.config.mqtt.port)
-        LOGGER.info("UDP enabled=%s input=%s:%s", self.config.udp.enabled, self.config.udp.bind_host, self.config.udp.bind_port)
+        LOGGER.info(
+            "UDP enabled=%s input=%s:%s",
+            self.config.udp.enabled,
+            self.config.udp.bind_host,
+            self.config.udp.bind_port,
+        )
         LOGGER.info(
             "Serial enabled=%s ports=%s baudrate=%s",
             self.config.serial.enabled,
@@ -131,17 +156,19 @@ class CollectorApp:
             self.config.serial.baudrate,
         )
         LOGGER.info(
-            "QR enabled=%s stream_url=%s stream_name=%s",
-            self.config.qr.enabled,
-            self.config.qr.stream_url,
-            self.config.qr.stream_name,
+            "Robot control enabled=%s port=%s topic=%s tx_period_ms=%s timeout_ms=%s",
+            self.config.robot_control.enabled,
+            self.config.robot_control.port,
+            self.config.robot_control.command_topic,
+            self.config.robot_control.tx_period_ms,
+            self.config.robot_control.command_timeout_ms,
         )
         LOGGER.info("SQLite path: %s", self.config.storage.sqlite_path)
 
         if self.config.serial.enabled and not self.config.serial.ports:
             LOGGER.warning("Serial ingestion is enabled but SERIAL_PORTS is empty")
-        if self.config.qr.enabled and not self.config.qr.stream_url:
-            LOGGER.warning("QR ingestion is enabled but QR_STREAM_URL is empty")
+        if self.config.robot_control.enabled and not self.config.robot_control.port:
+            LOGGER.warning("Robot control is enabled but ROBOT_SERIAL_PORT is empty")
 
         for worker in self._workers:
             LOGGER.info("Starting worker=%s", worker.name)
@@ -155,12 +182,13 @@ class CollectorApp:
 
         if self.udp_ingestor is not None:
             self.udp_ingestor.stop()
+        if self.mqtt_commands is not None:
+            self.mqtt_commands.stop()
+        if self.robot_bridge is not None:
+            self.robot_bridge.stop()
 
         for ingestor in self.serial_ingestors:
             ingestor.stop()
-
-        if self.qr_ingestor is not None:
-            self.qr_ingestor.stop()
 
         for worker in self._workers:
             LOGGER.info("Joining worker=%s", worker.name)
