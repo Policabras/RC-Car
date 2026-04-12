@@ -209,7 +209,7 @@ function App() {
 
               <div className="camera-container">
                 <img
-                  src="http://192.168.0.22:5000/video_feed"
+                  src="http://localhost:5000/video_feed"
                   alt="Transmisión"
                   style={{ width: "100%" }}
                   onError={(e) => {

@@ -8,7 +8,7 @@ import paho.mqtt.client as mqtt
 # ==========================
 # MQTT
 # ==========================
-MQTT_BROKER = "IP_DE_TU_PC"   # cambia por la IP de tu computadora
+MQTT_BROKER = "192.168.1.230"   # cambia por la IP de tu computadora
 MQTT_PORT = 1883
 MQTT_TOPIC = "robot/qr"
 
@@ -24,7 +24,7 @@ CORS(app)
 # ==========================
 # CÁMARA
 # ==========================
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+cap = cv2.VideoCapture(0,  cv2.CAP_DSHOW)#, cv2.CAP_V4L2)
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
 detector = cv2.QRCodeDetector()
@@ -45,12 +45,12 @@ def gen_frames():
         if not success:
             continue
 
-        small = cv2.resize(frame, (320, 240))
+        small = cv2.resize(frame, (640, 480))        
         retval, decoded_info, points, _ = detector.detectAndDecodeMulti(small)
 
-        if retval and points is not None:
-            scale_x = frame.shape[1] / 320
-            scale_y = frame.shape[0] / 240
+        if retval and points is not None and len(points) > 0:
+            scale_x = frame.shape[1] / 640
+            scale_y = frame.shape[0] / 480
 
             for i, data in enumerate(decoded_info):
                 if data:
