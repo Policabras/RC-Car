@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<body style="margin:0;background:black;">
+
+<video id="video" autoplay playsinline muted style="width:100%;"></video>
+
+<script>
+const pc = new RTCPeerConnection();
+
+pc.addTransceiver('video', { direction: 'recvonly' });
+
+pc.ontrack = event => {
+    document.getElementById('video').srcObject = event.streams[0];
+};
+
+async function start() {
+
+    const offer = await pc.createOffer();
+
+    await pc.setLocalDescription(offer);
+
+    const response = await fetch('/offer', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+            sdp: pc.localDescription.sdp,
+            type: pc.localDescription.type
+        })
+    });
+
+    const answer = await response.json();
+
+    await pc.setRemoteDescription(answer);
+}
+
+start();
+</script>
+
+</body>
+</html>

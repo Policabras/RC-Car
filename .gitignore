@@ -218,3 +218,26 @@ __marimo__/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+
+# Dependencias
+node_modules/
+dist/
+build/
+
+# Docker
+.docker/
+*.log
+
+# ESP32 / PlatformIO / Arduino
+.pio/
+.vscode/
+*.bin
+*.elf
+
+# Varios
+.DS_Store
+.env
+
+*venv
+*.venv
