@@ -1,313 +1,621 @@
-import { useEffect, useRef, useState } from "react";
-import { io, Socket } from "socket.io-client";
-import JSZip from "jszip";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { io, type Socket } from "socket.io-client";
 import "./Dashboard.css";
 
-type Punto = { x: number; y: number };
-
-type Sesion = {
-  id: number;
-  fecha: string;
-  puntos: number;
-  imagen: string;
-  csv: string;
-  qrs: string[];
+type SystemPayload = {
+  device_id: string;
+  stream: "system";
+  seq: number;
+  ts_source_ms: number;
+  ts_collector_ms: number;
+  sample_period_ms: number;
+  payload: {
+    cpu_percent_total: number;
+    cpu_percent_per_core: number[];
+    mem_percent: number;
+    mem_available_bytes: number;
+    disk_percent_root: number;
+    temperature_c: number;
+    net_rx_Bps: number;
+    net_tx_Bps: number;
+    boot_time_s: number;
+    loadavg: number[];
+  };
 };
 
+type StatusData = {
+  device_id: string;
+  stream: "status";
+  status: string;
+  ts_ms: number;
+};
+
+type ActuatorsData = {
+  device_id: string;
+  stream: "actuators";
+  seq: number;
+  ts_source_ms: number;
+  ts_collector_ms: number;
+  sample_period_ms: number;
+  payload: {
+    v_cmd: number;
+    w_cmd: number;
+    f_cmd: number;
+    base_cmd: number;
+    elbow_cmd: number;
+    wrist_cmd: number;
+    grip_cmd: number;
+    flipper_pos: number;
+    base_pos: number;
+    elbow_pos: number;
+    wrist_pos: number;
+    grip_pos: number;
+    left_mix: number;
+    right_mix: number;
+    link_ok: boolean;
+  };
+};
+
+type CommandPayload = {
+  v?: number;
+  w?: number;
+  f?: number;
+  base?: number;
+  elbow?: number;
+  wrist?: number;
+  grip?: number;
+  [key: string]: unknown;
+};
+
+type InitialTelemetry = {
+  system: SystemPayload | null;
+  status: StatusData | null;
+  actuators: ActuatorsData | null;
+  cmd: unknown;
+};
+
+const BACKEND_URL = "http://localhost:3000";
+const FRONT_CAMERA_URL = "http://192.168.3.7:8081/mjpeg";
+const REAR_CAMERA_URL = "";
+
 function App() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const socketRef = useRef<Socket | null>(null);
 
-  const [view, setView] = useState<"live" | "history">("live");
   const [connected, setConnected] = useState(false);
+  const [frontCameraLive, setFrontCameraLive] = useState(false);
+  const [rearCameraLive, setRearCameraLive] = useState(false);
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [clawOpen, setClawOpen] = useState(false);
+  const [systemData, setSystemData] = useState<SystemPayload | null>(null);
+  const [statusData, setStatusData] = useState<StatusData | null>(null);
+  const [actuatorsData, setActuatorsData] = useState<ActuatorsData | null>(null);
+  const [cmdData, setCmdData] = useState<CommandPayload | null>(null);
 
-  const [data, setData] = useState({ x: 0, y: 0, theta: 0 });
-  const [points, setPoints] = useState<Punto[]>([]);
-  const [history, setHistory] = useState<Sesion[]>([]);
-  const [qrList, setQrList] = useState<string[]>([]);
-  const [notification, setNotification] = useState("");
-
-  useEffect(() => {
-    const saved = localStorage.getItem("robot_history");
-    if (saved) setHistory(JSON.parse(saved));
-  }, []);
+  const [lastTelemetryAt, setLastTelemetryAt] = useState<number | null>(null);
+  const [lastUpdateSeconds, setLastUpdateSeconds] = useState(0);
 
   useEffect(() => {
-    const socket = io("http://localhost:3000", {
+    const timer = window.setInterval(() => {
+      if (!lastTelemetryAt) {
+        setLastUpdateSeconds(0);
+        return;
+      }
+
+      const elapsed = (Date.now() - lastTelemetryAt) / 1000;
+      setLastUpdateSeconds(elapsed);
+    }, 250);
+
+    return () => window.clearInterval(timer);
+  }, [lastTelemetryAt]);
+
+  useEffect(() => {
+    const socket = io(BACKEND_URL, {
       transports: ["websocket"],
-      upgrade: false
+      upgrade: false,
     });
 
     socketRef.current = socket;
 
+    const markTelemetry = () => {
+      setLastTelemetryAt(Date.now());
+    };
+
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    socket.on("robotData", (newData) => {
-      setData({
-        x: newData.x,
-        y: newData.y,
-        theta: newData.theta
-      });
-
-      if (isRecording) {
-        setPoints(prev => [...prev, { x: newData.x, y: newData.y }]);
-      }
+    socket.on("initialTelemetry", (data: InitialTelemetry) => {
+      setSystemData(data.system);
+      setStatusData(data.status);
+      setActuatorsData(data.actuators);
+      setCmdData(normalizeCmdData(data.cmd));
+      markTelemetry();
     });
 
-    // QR detectados desde backend
-    socket.on("qrData", (data) => {
-      console.log("QR detectado:", data.qr);
-      setQrList(prev => [...prev, data.qr]);
+    socket.on("systemData", (data: SystemPayload) => {
+      setSystemData(data);
+      markTelemetry();
+    });
+
+    socket.on("statusData", (data: StatusData) => {
+      setStatusData(data);
+      markTelemetry();
+    });
+
+    socket.on("actuatorsData", (data: ActuatorsData) => {
+      setActuatorsData(data);
+      markTelemetry();
+    });
+
+    socket.on("cmdData", (data: unknown) => {
+      setCmdData(normalizeCmdData(data));
+      markTelemetry();
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [isRecording]);
+  }, []);
 
-  const toggleClaw = () => {
-    const newState = !clawOpen;
-    setClawOpen(newState);
+  const system = systemData?.payload;
+  const actuators = actuatorsData?.payload;
 
-    socketRef.current?.emit("robotCommand", {
-      device: "claw",
-      action: newState ? "open" : "close"
-    });
-  };
+  const deviceId =
+    statusData?.device_id ||
+    systemData?.device_id ||
+    actuatorsData?.device_id ||
+    "--";
 
-  const guardarEnHistorial = () => {
-    const canvas = canvasRef.current;
-    if (!canvas || points.length === 0) return;
+  const robotStatus = formatStatus(statusData?.status);
+  const linearSpeed = toNumber(actuators?.v_cmd ?? cmdData?.v);
+  const angularSpeed = toNumber(actuators?.w_cmd ?? cmdData?.w);
 
-    const imagenData = canvas.toDataURL("image/png");
+  const raspStats = useMemo(
+    () => [
+      {
+        label: "CPU",
+        value: system ? `${formatNumber(system.cpu_percent_total, 1)}%` : "--",
+      },
+      {
+        label: "RAM",
+        value: system ? `${formatNumber(system.mem_percent, 1)}%` : "--",
+      },
+      {
+        label: "Temp",
+        value: system ? `${formatNumber(system.temperature_c, 1)} °C` : "--",
+      },
+      {
+        label: "Estado",
+        value: robotStatus,
+      },
+      {
+        label: "Último status",
+        value: formatDateTime(statusData?.ts_ms),
+      },
+      {
+        label: "Device ID",
+        value: deviceId,
+      },
+    ],
+    [deviceId, robotStatus, statusData?.ts_ms, system],
+  );
 
-    const nuevaSesion: Sesion = {
-      id: Date.now(),
-      fecha: new Date().toLocaleString(),
-      puntos: points.length,
-      imagen: imagenData,
-      csv: points.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join("\n"),
-      qrs: qrList
-    };
+  const armTelemetry = useMemo(
+    () => [
+      { label: "Flipper cmd", value: formatMaybeNumber(actuators?.f_cmd) },
+      { label: "Flipper pos", value: formatMaybeNumber(actuators?.flipper_pos) },
+      { label: "Base cmd", value: formatMaybeNumber(actuators?.base_cmd) },
+      { label: "Base pos", value: formatMaybeNumber(actuators?.base_pos) },
+      { label: "Elbow cmd", value: formatMaybeNumber(actuators?.elbow_cmd) },
+      { label: "Elbow pos", value: formatMaybeNumber(actuators?.elbow_pos) },
+      { label: "Wrist cmd", value: formatMaybeNumber(actuators?.wrist_cmd) },
+      { label: "Wrist pos", value: formatMaybeNumber(actuators?.wrist_pos) },
+      { label: "Grip cmd", value: formatMaybeNumber(actuators?.grip_cmd) },
+      { label: "Grip pos", value: formatMaybeNumber(actuators?.grip_pos) },
+      {
+        label: "Link OK",
+        value:
+          actuators?.link_ok === undefined
+            ? "--"
+            : actuators.link_ok
+              ? "Sí"
+              : "No",
+      },
+    ],
+    [actuators],
+  );
 
-    const nuevoHistorial = [nuevaSesion, ...history];
+  const frontCameraStatus = FRONT_CAMERA_URL
+    ? frontCameraLive
+      ? "Activa"
+      : "Sin señal"
+    : "Sin URL";
 
-    setHistory(nuevoHistorial);
-    localStorage.setItem("robot_history", JSON.stringify(nuevoHistorial));
-
-    setNotification("💾 Sesión guardada");
-    setTimeout(() => setNotification(""), 2500);
-  };
-
-  const descargarZip = async (sesion: Sesion) => {
-    const zip = new JSZip();
-
-    zip.file("ruta.csv", sesion.csv);
-
-    sesion.qrs.forEach((qr, i) => {
-      zip.file(`qr_${i + 1}.txt`, qr);
-    });
-
-    const blob = await zip.generateAsync({ type: "blob" });
-
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `sesion_${sesion.id}.zip`;
-    link.click();
-  };
-
-  useEffect(() => {
-    if (view !== "live") return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    const scale = 5;
-
-    // Trayectoria
-    ctx.beginPath();
-    ctx.strokeStyle = "#2dd4bf";
-    ctx.lineWidth = 2;
-
-    points.forEach((p, i) => {
-      const x = centerX + p.x * scale;
-      const y = centerY - p.y * scale;
-
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-
-    ctx.stroke();
-
-    // Robot
-    const rX = centerX + data.x * scale;
-    const rY = centerY - data.y * scale;
-
-    ctx.save();
-    ctx.translate(rX, rY);
-    ctx.rotate(-(data.theta * Math.PI) / 180);
-
-    ctx.fillStyle = "#60a5fa";
-    ctx.fillRect(-12, -8, 24, 16);
-
-    ctx.fillStyle = "white";
-    ctx.fillRect(8, -2, 6, 4);
-
-    ctx.restore();
-
-  }, [points, data, view]);
+  const rearCameraStatus = REAR_CAMERA_URL
+    ? rearCameraLive
+      ? "Activa"
+      : "Sin señal"
+    : "Sin URL";
 
   return (
-    <div className="dashboard-container">
-      <header className="topbar">
-        <div className="title">
-          <h1>TMR Control Station</h1>
-
-          <nav style={{ marginTop: "10px" }}>
-            <button
-              className={`nav-btn ${view === "live" ? "active" : ""}`}
-              onClick={() => setView("live")}
-            >
-              EN VIVO
-            </button>
-
-            <button
-              className={`nav-btn ${view === "history" ? "active" : ""}`}
-              onClick={() => setView("history")}
-            >
-              HISTORIAL
-            </button>
-          </nav>
-        </div>
-
-        <div className="status-pill">
-          <span className={`dot ${connected ? "online" : "offline"}`}></span>
-          {connected ? "CONECTADO" : "DESCONECTADO"}
-        </div>
-      </header>
-
-      {view === "live" ? (
-        <main className="dashboard-grid">
-
-          <div className="visual-section">
-
-            <section className="card camera-card">
-              <div className="card-header">
-                <h3>Cámara en Tiempo Real</h3>
-              </div>
-
-              <div className="camera-container">
-                <img
-                  src="http://localhost:5000/video_feed"
-                  alt="Transmisión"
-                  style={{ width: "100%" }}
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      "http://localhost:5000/video_feed";
-                  }}
-                />
-              </div>
-            </section>
-
-            <section className="card map-card">
-              <div className="card-header">
-                <h3>Vista de trayectoria</h3>
-              </div>
-
-              <div className="robot-stage">
-                <div className="grid-bg"></div>
-                <canvas ref={canvasRef} width={600} height={400} />
-              </div>
-            </section>
-
+    <div className="dashboard-page">
+      <div className="dashboard-shell">
+        <header className="topbar">
+          <div className="brand-block">
+            <p className="eyebrow">Robot Control Station</p>
+            <h1>Dashboard de monitoreo</h1>
+            <p className="subtitle">
+              Frontend distribuido para system, status, actuators y cmd.
+            </p>
           </div>
 
-          <aside className="telemetry-card card">
+          <div className="status-pills">
+            <StatusPill
+              label="Backend"
+              value={connected ? "Conectado" : "Desconectado"}
+              tone={connected ? "ok" : "danger"}
+            />
+            <StatusPill
+              label="Cam D"
+              value={frontCameraStatus}
+              tone={frontCameraLive ? "ok" : "neutral"}
+            />
+            <StatusPill
+              label="Cam T"
+              value={rearCameraStatus}
+              tone={rearCameraLive ? "ok" : "neutral"}
+            />
+            <StatusPill
+              label="Robot"
+              value={robotStatus}
+              tone={statusData?.status === "online" ? "info" : "neutral"}
+            />
+            <StatusPill
+              label="Última trama"
+              value={`${lastUpdateSeconds.toFixed(2)} s`}
+              tone="neutral"
+            />
+          </div>
+        </header>
 
-            <div className="card-header">
-              <h3>Panel de Control</h3>
-            </div>
+        <main className="workspace-grid">
+          <section className="column-stack">
+            <Panel
+              title="Trayectoria"
+              subtitle="Odometría pendiente de integrar"
+              tag="Track"
+              bodyClassName="panel-no-padding"
+            >
+              <div className="trajectory-stage">
+                <div className="trajectory-grid"></div>
+                <div className="trajectory-center">
+                  <div className="trajectory-badge">Placeholder</div>
+                  <div className="trajectory-title">
+                    Odometría aún no integrada
+                  </div>
+                  <div className="trajectory-text">
+                    Aquí se mostrará la trayectoria real cuando el módulo esté listo.
+                  </div>
+                </div>
+              </div>
 
-            <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
+              <div className="mini-metric-row">
+                <MiniMetric label="Pos X" value="--" />
+                <MiniMetric label="Pos Y" value="--" />
+                <MiniMetric label="Ángulo theta" value="--" />
+              </div>
+            </Panel>
 
-              <button
-                className="save-button"
-                onClick={() => setIsRecording(!isRecording)}
-                style={{
-                  backgroundColor: isRecording ? "#ef4444" : "#22c55e"
-                }}
-              >
-                {isRecording ? "⏹ DETENER" : "▶ INICIAR"}
-              </button>
+            <Panel title="Datos de la rasp" subtitle="Sistema base" tag="Raspberry">
+              <div className="metric-grid metric-grid-2">
+                {raspStats.map((item) => (
+                  <MetricCard
+                    key={item.label}
+                    label={item.label}
+                    value={item.value}
+                  />
+                ))}
+              </div>
+            </Panel>
+          </section>
 
-              <button
-                className="save-button"
-                onClick={toggleClaw}
-                style={{
-                  backgroundColor: clawOpen ? "#f59e0b" : "#3b82f6"
-                }}
-              >
-                {clawOpen ? "🦾 CERRAR GARRA" : "👐 ABRIR GARRA"}
-              </button>
+          <section className="column-stack">
+            <Panel
+              title="Cámara delantera"
+              subtitle="Stream MJPEG"
+              tag="MJPEG"
+              bodyClassName="panel-no-padding"
+            >
+              <CameraFeed
+                src={FRONT_CAMERA_URL}
+                statusText={frontCameraStatus}
+                footerText={FRONT_CAMERA_URL || "Sin URL configurada"}
+                heightClassName="camera-stage-large"
+                onLoad={() => setFrontCameraLive(true)}
+                onError={() => setFrontCameraLive(false)}
+              />
+            </Panel>
 
-            </div>
+            <Panel
+              title="Cámara trasera"
+              subtitle="Stream MJPEG"
+              tag="MJPEG"
+              bodyClassName="panel-no-padding"
+            >
+              <CameraFeed
+                src={REAR_CAMERA_URL}
+                statusText={rearCameraStatus}
+                footerText={
+                  REAR_CAMERA_URL || "Pendiente configurar URL de cámara trasera"
+                }
+                heightClassName="camera-stage-medium"
+                onLoad={() => setRearCameraLive(true)}
+                onError={() => setRearCameraLive(false)}
+              />
+            </Panel>
+          </section>
 
-            <div className="telemetry-grid">
-              <div className="stat-item"><span>X</span><strong>{data.x.toFixed(2)}</strong></div>
-              <div className="stat-item"><span>Y</span><strong>{data.y.toFixed(2)}</strong></div>
-              <div className="stat-item"><span>Yaw</span><strong>{data.theta.toFixed(1)}°</strong></div>
-              <div className="stat-item"><span>Puntos</span><strong>{points.length}</strong></div>
-            </div>
+          <section className="column-stack">
+            <Panel title="Velocidad" subtitle="Lineal y angular" tag="VEL">
+              <div className="gauge-grid">
+                <GaugeCard
+                  label="Velocidad lineal"
+                  displayValue={formatNumber(linearSpeed, 2)}
+                  unit="m/s"
+                  percent={toGaugePercent(linearSpeed)}
+                />
+                <GaugeCard
+                  label="Velocidad angular"
+                  displayValue={formatNumber(angularSpeed, 2)}
+                  unit="rad/s"
+                  percent={toGaugePercent(angularSpeed)}
+                />
+              </div>
+            </Panel>
 
-            <div style={{ marginTop: 20, display: "flex", gap: "10px" }}>
-              <button className="save-button secondary" onClick={guardarEnHistorial}>
-                💾 Guardar
-              </button>
-
-              <button className="save-button secondary" onClick={() => setPoints([])}>
-                🧹 Limpiar
-              </button>
-            </div>
-
-          </aside>
-
+            <Panel
+              title="Datos de telemetría"
+              subtitle="Flipper y brazo robótico"
+              tag="Live"
+            >
+              <div className="metric-grid telemetry-grid">
+                {armTelemetry.map((item) => (
+                  <MetricCard
+                    key={item.label}
+                    label={item.label}
+                    value={item.value}
+                  />
+                ))}
+              </div>
+            </Panel>
+          </section>
         </main>
-      ) : (
-        <main className="history-grid">
-          {history.map((s) => (
-            <div className="card" key={s.id}>
-              <img src={s.imagen} width="100%" alt="Ruta" />
-              <p>{s.fecha}</p>
-
-              <button
-                className="save-button"
-                onClick={() => descargarZip(s)}
-              >
-                Descargar ZIP
-              </button>
-            </div>
-          ))}
-        </main>
-      )}
-
-      {notification && (
-        <div className="toast-notification">
-          {notification}
-        </div>
-      )}
+      </div>
     </div>
   );
+}
+
+function Panel({
+  title,
+  subtitle,
+  tag,
+  children,
+  bodyClassName = "",
+}: {
+  title: string;
+  subtitle: string;
+  tag: string;
+  children: ReactNode;
+  bodyClassName?: string;
+}) {
+  return (
+    <article className="panel">
+      <div className="panel-header">
+        <div>
+          <h2 className="panel-title">{title}</h2>
+          <p className="panel-subtitle">{subtitle}</p>
+        </div>
+        <span className="panel-tag">{tag}</span>
+      </div>
+
+      <div className={`panel-body ${bodyClassName}`.trim()}>{children}</div>
+    </article>
+  );
+}
+
+function StatusPill({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "ok" | "info" | "neutral" | "danger";
+}) {
+  return (
+    <div className={`status-pill status-pill-${tone}`}>
+      <span className="status-pill-label">{label}</span>
+      <strong className="status-pill-value">{value}</strong>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">{label}</div>
+      <div className="metric-value">{value}</div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="mini-metric">
+      <div className="mini-metric-label">{label}</div>
+      <div className="mini-metric-value">{value}</div>
+    </div>
+  );
+}
+
+function GaugeCard({
+  label,
+  displayValue,
+  unit,
+  percent,
+}: {
+  label: string;
+  displayValue: string;
+  unit: string;
+  percent: number;
+}) {
+  const radius = 46;
+  const stroke = 10;
+  const normalizedRadius = radius - stroke / 2;
+  const circumference = normalizedRadius * 2 * Math.PI;
+  const strokeDashoffset =
+    circumference - (clamp(percent, 0, 100) / 100) * circumference;
+
+  return (
+    <div className="gauge-card">
+      <div className="gauge-label">{label}</div>
+
+      <div className="gauge-wrap">
+        <svg className="gauge-svg" width="124" height="124" viewBox="0 0 124 124">
+          <circle
+            className="gauge-track"
+            strokeWidth={stroke}
+            r={normalizedRadius}
+            cx="62"
+            cy="62"
+            fill="transparent"
+          />
+          <circle
+            className="gauge-progress"
+            strokeWidth={stroke}
+            strokeDasharray={`${circumference} ${circumference}`}
+            style={{ strokeDashoffset }}
+            r={normalizedRadius}
+            cx="62"
+            cy="62"
+            fill="transparent"
+          />
+        </svg>
+
+        <div className="gauge-center">
+          <div className="gauge-value">{displayValue}</div>
+          <div className="gauge-unit">{unit}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CameraFeed({
+  src,
+  statusText,
+  footerText,
+  heightClassName,
+  onLoad,
+  onError,
+}: {
+  src: string;
+  statusText: string;
+  footerText: string;
+  heightClassName: string;
+  onLoad: () => void;
+  onError: () => void;
+}) {
+  const hasSrc = Boolean(src);
+
+  return (
+    <div className={`camera-stage ${heightClassName}`}>
+      <div className="camera-overlay-grid"></div>
+
+      <div className="camera-status-badge">{statusText}</div>
+
+      {hasSrc ? (
+        <img
+          className="camera-stream"
+          src={src}
+          alt="Transmisión MJPEG"
+          onLoad={onLoad}
+          onError={onError}
+        />
+      ) : (
+        <div className="camera-placeholder">
+          <div className="camera-placeholder-title">Vista de cámara</div>
+          <div className="camera-placeholder-text">
+            Pendiente configurar fuente MJPEG
+          </div>
+        </div>
+      )}
+
+      <div className="camera-footer">{footerText}</div>
+    </div>
+  );
+}
+
+function normalizeCmdData(value: unknown): CommandPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if ("payload" in value && isRecord(value.payload)) {
+    return value.payload as CommandPayload;
+  }
+
+  return value as CommandPayload;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function formatNumber(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
+  }
+
+  return value.toFixed(digits);
+}
+
+function formatMaybeNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "--";
+  }
+
+  return value.toFixed(2);
+}
+
+function formatDateTime(value: number | null | undefined): string {
+  if (!value) {
+    return "--";
+  }
+
+  return new Date(value).toLocaleString();
+}
+
+function formatStatus(value: string | null | undefined): string {
+  if (!value) {
+    return "--";
+  }
+
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === "number" && !Number.isNaN(value)) {
+    return value;
+  }
+
+  return 0;
+}
+
+function toGaugePercent(value: number): number {
+  return clamp(Math.abs(value) * 100, 0, 100);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 export default App;

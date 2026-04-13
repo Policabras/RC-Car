@@ -5,104 +5,219 @@ const mqtt = require("mqtt");
 const { Server } = require("socket.io");
 
 const app = express();
-// Habilitamos CORS para que el frontend pueda consultar la API si es necesario
 app.use(cors());
+app.use(express.json());
 
 const server = http.createServer(app);
 
-// Configuración de Socket.io optimizada para evitar errores de conexión
+const FRONTEND_URL = "http://localhost:5173";
+const PORT = 3000;
+const MQTT_URL = "mqtt://192.168.3.10:1883";
+const DEVICE_ID = "pi_robot_01";
+
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // URL de tu frontend Vite
-    methods: ["GET", "POST"]
+    origin: FRONTEND_URL,
+    methods: ["GET", "POST"],
   },
-  transports: ["websocket"] // Forzamos websocket para mayor estabilidad
+  transports: ["websocket"],
 });
 
 // ==========================
-// Variables de Estado
+// Estado en memoria
 // ==========================
-let thetaSuave = 0;
+const latestTelemetry = {
+  system: null,
+  status: null,
+  actuators: null,
+  cmd: null,
+};
 
 // ==========================
-// Conexión MQTT (Docker)
+// MQTT
 // ==========================
-// Importante: Usamos 'mosquitto' porque es el nombre del servicio en docker-compose
-const mqttClient = mqtt.connect("mqtt://mosquitto:1883");
+const mqttClient = mqtt.connect(MQTT_URL, {
+  reconnectPeriod: 2000,
+});
 
 mqttClient.on("connect", () => {
-  console.log("✅ Backend conectado a MQTT Broker (Mosquitto)");
-  mqttClient.subscribe("robot/position", (err) => {
-    if (!err) {
-      console.log("📡 Suscrito al tópico: robot/position");
+  console.log(`Backend conectado a MQTT Broker: ${MQTT_URL}`);
+
+  const topics = [
+    `telemetry/${DEVICE_ID}/system`,
+    `telemetry/${DEVICE_ID}/status`,
+    `telemetry/${DEVICE_ID}/actuators`,
+    `telemetry/${DEVICE_ID}/cmd/#`,
+  ];
+
+  mqttClient.subscribe(topics, (err) => {
+    if (err) {
+      console.error("Error al suscribirse a tópicos MQTT:", err.message);
+      return;
     }
-  });
-  mqttClient.subscribe("robot/qr", (err) => {
-    if (!err) {
-      console.log("📡 Suscrito al tópico: robot/qr");
-    }
+
+    topics.forEach((topic) => {
+      console.log(`Suscrito al tópico: ${topic}`);
+    });
   });
 });
 
+mqttClient.on("reconnect", () => {
+  console.log("Reintentando conexión con MQTT...");
+});
+
+mqttClient.on("error", (err) => {
+  console.error("Error MQTT:", err.message);
+});
+
+mqttClient.on("offline", () => {
+  console.log("MQTT offline");
+});
+
 // ==========================
-// Procesamiento de Datos
+// Utilidad para detectar stream
 // ==========================
-mqttClient.on("message", (topic, message) => {
+function getStreamFromTopic(topic) {
+  const parts = topic.split("/");
+
+  // Esperado:
+  // telemetry/pi_robot_01/system
+  // telemetry/pi_robot_01/status
+  // telemetry/pi_robot_01/actuators
+  // telemetry/pi_robot_01/cmd/...
+  if (parts.length < 3) return null;
+
+  return {
+    mainStream: parts[2],
+    subStream: parts[3] || null,
+  };
+}
+
+// ==========================
+// Procesamiento MQTT -> Socket.io
+// ==========================
+mqttClient.on("message", (topic, messageBuffer) => {
   try {
-    if (topic === "robot/position") {
-    // Parseamos el JSON que viene del bridge_final.py
-    const raw = JSON.parse(message.toString());
+    const rawMessage = messageBuffer.toString();
+    const parsed = JSON.parse(rawMessage);
 
-    // Extraemos los valores reales. Si no existen, usamos 0 por seguridad.
-    const xReal = raw.x || 0;
-    const yReal = raw.y || 0;
-    const thetaNuevo = raw.theta || 0;
+    const topicInfo = getStreamFromTopic(topic);
 
-    // Filtro de suavizado para el ángulo (Yaw)
-    thetaSuave = thetaSuave * 0.9 + thetaNuevo * 0.1;
-
-    // Creamos el objeto final con los datos REALES
-    const data = {
-      x: xReal,
-      y: yReal,
-      theta: thetaSuave
-    };
-
-    // Imprimimos en los logs de Docker para verificar
-    console.log(`📩 Posición: X=${data.x}, Y=${data.y}, T=${data.theta.toFixed(4)}`);
-
-    // Enviamos los datos al Frontend en tiempo real
-    io.emit("robotData", data);
-    }
-    if (topic === "robot/qr") {
-      console.log("QR recibido:", message.toString());
-
-      io.emit("qrData", {
-        qr: message.toString()
-      });
+    if (!topicInfo) {
+      console.warn(`Tópico no reconocido: ${topic}`);
+      return;
     }
 
-  } catch (e) {
-    console.error("❌ Error al procesar JSON de MQTT:", e.message);
+    const { mainStream, subStream } = topicInfo;
+
+    switch (mainStream) {
+      case "system":
+        latestTelemetry.system = parsed;
+
+        console.log("SYSTEM recibido:", parsed);
+
+        io.emit("systemData", parsed);
+        io.emit("telemetryData", {
+          topic,
+          stream: "system",
+          data: parsed,
+        });
+        break;
+
+      case "status":
+        latestTelemetry.status = parsed;
+
+        console.log("STATUS recibido:", parsed);
+
+        io.emit("statusData", parsed);
+        io.emit("telemetryData", {
+          topic,
+          stream: "status",
+          data: parsed,
+        });
+        break;
+
+      case "actuators":
+        latestTelemetry.actuators = parsed;
+
+        console.log("ACTUATORS recibido:", parsed);
+
+        io.emit("actuatorsData", parsed);
+        io.emit("telemetryData", {
+          topic,
+          stream: "actuators",
+          data: parsed,
+        });
+        break;
+
+      case "cmd":
+        latestTelemetry.cmd = {
+          topic,
+          subStream,
+          payload: parsed,
+        };
+
+        console.log("CMD recibido:", {
+          topic,
+          subStream,
+          payload: parsed,
+        });
+
+        io.emit("cmdData", {
+          topic,
+          subStream,
+          payload: parsed,
+        });
+
+        io.emit("telemetryData", {
+          topic,
+          stream: "cmd",
+          subStream,
+          data: parsed,
+        });
+        break;
+
+      default:
+        console.warn(`Stream no manejado: ${mainStream} | topic=${topic}`);
+        break;
+    }
+  } catch (error) {
+    console.error(`Error procesando mensaje MQTT del tópico ${topic}:`, error.message);
   }
 });
 
 // ==========================
-// Gestión de Sockets
+// Endpoints opcionales
+// ==========================
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    mqttConnected: mqttClient.connected,
+    deviceId: DEVICE_ID,
+  });
+});
+
+app.get("/api/telemetry/latest", (req, res) => {
+  res.json(latestTelemetry);
+});
+
+// ==========================
+// Socket.io
 // ==========================
 io.on("connection", (socket) => {
-  console.log("🟢 Estación Base conectada (ID):", socket.id);
+  console.log("Frontend conectado:", socket.id);
+
+  socket.emit("initialTelemetry", latestTelemetry);
 
   socket.on("disconnect", () => {
-    console.log("🔴 Estación Base desconectada");
+    console.log("Frontend desconectado:", socket.id);
   });
 });
 
 // ==========================
-// Inicio del Servidor
+// Inicio servidor
 // ==========================
-const PORT = 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Backend del TMR activo en puerto ${PORT}`);
-  console.log(`📡 Esperando datos de odometría...`);
+  console.log(`Backend activo en puerto ${PORT}`);
+  console.log(`Escuchando telemetría de ${DEVICE_ID}`);
 });
