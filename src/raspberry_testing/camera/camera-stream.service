@@ -10,7 +10,7 @@ User=charly
 Group=video
 WorkingDirectory=/home/charly/projects/RC-Car/src/raspberry_testing/camera
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/charly/projects/RC-Car/.venv/bin/python /home/charly/projects/RC-Car/src/raspberry_testing/camera/raspberry_cam_streaming.py --device /dev/video0
+ExecStart=/home/charly/projects/RC-Car/.venv/bin/python /home/charly/projects/RC-Car/src/raspberry_testing/camera/raspberry_cam_streaming.py --device0 /dev/video0 --device1 /dev/video1
 Restart=always
 RestartSec=5
 
