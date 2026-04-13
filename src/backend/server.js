@@ -12,7 +12,7 @@ const server = http.createServer(app);
 
 const FRONTEND_URL = "http://localhost:5173";
 const PORT = 3000;
-const MQTT_URL = "mqtt://192.168.3.10:1883";
+const MQTT_URL = "mqtt://192.168.3.4:1883";
 const DEVICE_ID = "pi_robot_01";
 
 const io = new Server(server, {

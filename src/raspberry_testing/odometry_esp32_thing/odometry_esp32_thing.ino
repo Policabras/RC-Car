@@ -479,8 +479,8 @@ void loop() {
 
   if (readPacket(newV, newW, newF, newBase, newElbow, newWrist, newGrip)) {
     // Mantengo tu mapeo original
-    v_cmd = clampInt(-newW, -1000, 1000);
-    w_cmd = clampInt(newV, -1000, 1000);
+    v_cmd = clampInt(newV, -1000, 1000);
+    w_cmd = clampInt(newW, -1000, 1000);
 
     f_cmd     = clampInt(newF, -1000, 1000);
     base_cmd  = clampInt(newBase, -1000, 1000);
