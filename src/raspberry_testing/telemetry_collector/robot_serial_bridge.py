@@ -52,6 +52,8 @@ class RobotSerialBridge(StoppableThread):
         self.tx_period_s = tx_period_s
         self.command_timeout_ms = command_timeout_ms
 
+        self._non_json_debug_budget = 25
+
     def _line_to_envelope(self, line: str) -> TelemetryEnvelope:
         msg = json.loads(line)
 
@@ -85,6 +87,22 @@ class RobotSerialBridge(StoppableThread):
             explicit_topic=explicit_topic,
         )
 
+    def _log_non_json(self, raw: bytes) -> None:
+        if self._non_json_debug_budget <= 0:
+            return
+
+        self._non_json_debug_budget -= 1
+        preview = raw[:120]
+        text_preview = preview.decode("utf-8", errors="replace").strip()
+        LOGGER.debug(
+            "Ignoring non-JSON serial line on %s len=%s raw=%r hex=%s text=%s",
+            self.port,
+            len(raw),
+            preview,
+            preview.hex(" "),
+            text_preview,
+        )
+
     def run(self) -> None:
         LOGGER.info(
             "RobotSerialBridge starting port=%s baudrate=%s tx_period_s=%.3f command_timeout_ms=%s",
@@ -101,17 +119,37 @@ class RobotSerialBridge(StoppableThread):
                     baudrate=self.baudrate,
                     timeout=self.timeout_s,
                     write_timeout=1.0,
+                    bytesize=serial.EIGHTBITS,
+                    parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE,
+                    exclusive=True,
                 ) as ser:
+                    try:
+                        ser.dtr = False
+                        ser.rts = False
+                    except Exception:
+                        LOGGER.debug("Could not force DTR/RTS low on %s", self.port, exc_info=True)
+
+                    time.sleep(0.25)
+
+                    try:
+                        ser.reset_input_buffer()
+                        ser.reset_output_buffer()
+                    except Exception:
+                        LOGGER.debug("Could not reset serial buffers on %s", self.port, exc_info=True)
+
                     LOGGER.info("Robot serial connected: %s", self.port)
                     next_tx = time.monotonic()
 
                     while not self.stopped():
                         now = time.monotonic()
+
                         if now >= next_tx:
                             packet = self.command_state.to_serial_packet(
                                 timeout_ms=self.command_timeout_ms,
                             )
                             ser.write(packet)
+                            ser.flush()
                             LOGGER.debug("Robot UART TX port=%s packet=%r", self.port, packet)
                             next_tx = now + self.tx_period_s
 
@@ -124,11 +162,7 @@ class RobotSerialBridge(StoppableThread):
                             continue
 
                         if not line.startswith("{"):
-                            LOGGER.debug(
-                                "Ignoring non-JSON serial line on %s: %s",
-                                self.port,
-                                line,
-                            )
+                            self._log_non_json(raw)
                             continue
 
                         try:
