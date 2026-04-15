@@ -75,8 +75,8 @@ type InitialTelemetry = {
 };
 
 const BACKEND_URL = "http://localhost:3000";
-const FRONT_CAMERA_URL = "http://192.168.3.7:8081/mjpeg/0";
-const REAR_CAMERA_URL = "http://192.168.3.7:8081/mjpeg/1";
+const FRONT_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/0";
+const REAR_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/1";
 
 function App() {
   const socketRef = useRef<Socket | null>(null);

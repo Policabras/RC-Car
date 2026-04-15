@@ -84,7 +84,7 @@ SHUTDOWN_HOLD = float(os.getenv("SHUTDOWN_HOLD", "5.0"))
 
 # Axis mapping
 AXIS_LEFT_X = int(os.getenv("AXIS_LEFT_X", "0"))
-AXIS_LEFT_Y = int(os.getenv("AXIS_LEFT_Y", "1"))
+AXIS_LEFT_Y = int(os.getenv("AXIS_LEFT_Y", "1"))   # Reservado / no usado en la lógica actual
 AXIS_RIGHT_X = int(os.getenv("AXIS_RIGHT_X", "2"))
 AXIS_RIGHT_Y = int(os.getenv("AXIS_RIGHT_Y", "3"))
 AXIS_L2 = int(os.getenv("AXIS_L2", "4"))
@@ -92,8 +92,13 @@ AXIS_R2 = int(os.getenv("AXIS_R2", "5"))
 
 # Button mapping
 BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "9"))
-BTN_GRIP_OPEN = int(os.getenv("BTN_GRIP_OPEN", "2"))
-BTN_GRIP_CLOSE = int(os.getenv("BTN_GRIP_CLOSE", "1"))
+
+# Mapeo típico estilo Xbox:
+# A=0, B=1, X=2, Y=3
+BTN_WRIST_UP = int(os.getenv("BTN_WRIST_UP", os.getenv("BTN_Y", "2")))      # Y
+BTN_WRIST_DOWN = int(os.getenv("BTN_WRIST_DOWN", os.getenv("BTN_A", "1")))  # A
+BTN_GRIP_OPEN = int(os.getenv("BTN_GRIP_OPEN", os.getenv("BTN_X", "3")))    # X
+BTN_GRIP_CLOSE = int(os.getenv("BTN_GRIP_CLOSE", os.getenv("BTN_B", "0")))  # B
 
 # Logging
 LOG_DIR = Path(os.getenv("LOG_DIR", str(BASE_DIR / "logs"))).expanduser()
@@ -557,26 +562,28 @@ def compute_drive(lx: float, l2: float, r2: float) -> tuple[int, int]:
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
 
-def compute_flipper(ry: float) -> int:
-    if INVERT_RY:
-        ry = -ry
-    return clamp(int(ry * F_MAX), -1000, 1000)
+def compute_flipper_from_hat(hat_y: int) -> int:
+    if INVERT_HAT_Y:
+        hat_y = -hat_y
+    return clamp(int(hat_y * F_MAX), -1000, 1000)
 
 
 def compute_base(rx: float) -> int:
     return clamp(int(rx * BASE_MAX), -1000, 1000)
 
 
-def compute_elbow(ly: float) -> int:
-    if INVERT_LY:
-        ly = -ly
-    return clamp(int(ly * ELBOW_MAX), -1000, 1000)
+def compute_elbow(ry: float) -> int:
+    if INVERT_RY:
+        ry = -ry
+    return clamp(int(ry * ELBOW_MAX), -1000, 1000)
 
 
-def compute_wrist(hat_y: int) -> int:
-    if INVERT_HAT_Y:
-        hat_y = -hat_y
-    return clamp(int(hat_y * WRIST_MAX), -1000, 1000)
+def compute_wrist(up_pressed: bool, down_pressed: bool) -> int:
+    if up_pressed and not down_pressed:
+        return WRIST_MAX
+    if down_pressed and not up_pressed:
+        return -WRIST_MAX
+    return 0
 
 
 def compute_grip(open_pressed: bool, close_pressed: bool) -> int:
@@ -661,6 +668,9 @@ def main() -> None:
         SEND_INTERVAL,
         PRINT_INTERVAL,
     )
+    logger.info(
+        "[MAP] LX->w | L2/R2->v | HAT_Y->f | RX->base | RY->elbow | Y/A->wrist | X/B->grip"
+    )
 
     log_snapshot(level=logging.INFO, reason="program_start")
 
@@ -734,8 +744,9 @@ def main() -> None:
                                 stop_rumble(joystick)
                                 rumble_on = False
 
+                # Lectura de sticks/gatillos
                 lx = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_X)), DEADZONE_STICK)
-                ly = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_Y)), DEADZONE_STICK)
+                ly = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_Y)), DEADZONE_STICK)  # Solo debug
                 rx = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_RIGHT_X)), DEADZONE_STICK)
                 ry = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_RIGHT_Y)), DEADZONE_STICK)
 
@@ -744,19 +755,24 @@ def main() -> None:
                 l2 = 0.0 if l2 < DEADZONE_TRIGGER else l2
                 r2 = 0.0 if r2 < DEADZONE_TRIGGER else r2
 
+                # Cruceta vertical -> flippers
                 hat_y = safe_get_hat_y(joystick)
-                grip_open = safe_get_button(joystick, BTN_GRIP_OPEN) == 1
-                grip_close = safe_get_button(joystick, BTN_GRIP_CLOSE) == 1
+
+                # Botones
+                wrist_up = safe_get_button(joystick, BTN_WRIST_UP) == 1     # Y
+                wrist_down = safe_get_button(joystick, BTN_WRIST_DOWN) == 1 # A
+                grip_open = safe_get_button(joystick, BTN_GRIP_OPEN) == 1   # X
+                grip_close = safe_get_button(joystick, BTN_GRIP_CLOSE) == 1 # B
 
                 drive_v, drive_w = compute_drive(lx, l2, r2)
 
                 cmd = CommandState(
                     v=drive_v,
                     w=drive_w,
-                    f=compute_flipper(ry),
+                    f=compute_flipper_from_hat(hat_y),
                     base=compute_base(rx),
-                    elbow=compute_elbow(ly),
-                    wrist=compute_wrist(hat_y),
+                    elbow=compute_elbow(ry),
+                    wrist=compute_wrist(wrist_up, wrist_down),
                     grip=compute_grip(grip_open, grip_close),
                 )
 
@@ -800,6 +816,7 @@ def main() -> None:
                     logger.info(
                         "[STAT] v=%4d w=%4d f=%4d base=%4d elbow=%4d wrist=%4d grip=%4d "
                         "LX=%+.2f LY=%+.2f RX=%+.2f RY=%+.2f L2=%.2f R2=%.2f HATY=%+d "
+                        "Y=%d A=%d X=%d B=%d "
                         "%s loops=%s events=%s mqtt=%s got=%s mem=%.2fMB",
                         cmd.v,
                         cmd.w,
@@ -815,6 +832,10 @@ def main() -> None:
                         l2,
                         r2,
                         hat_y,
+                        int(wrist_up),
+                        int(wrist_down),
+                        int(grip_open),
+                        int(grip_close),
                         mov,
                         total_loops,
                         total_events,
@@ -835,6 +856,11 @@ def main() -> None:
                             "shutdown_triggered": shutdown_triggered,
                             "rumble_on": rumble_on,
                             "got_events_this_loop": got_events_this_loop,
+                            "wrist_up": wrist_up,
+                            "wrist_down": wrist_down,
+                            "grip_open": grip_open,
+                            "grip_close": grip_close,
+                            "hat_y": hat_y,
                         },
                     )
 
