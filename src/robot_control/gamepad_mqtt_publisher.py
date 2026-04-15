@@ -569,7 +569,7 @@ def compute_flipper_from_hat(hat_y: int) -> int:
 
 
 def compute_base(rx: float) -> int:
-    return clamp(int(rx * BASE_MAX), -1000, 1000)
+    return clamp(int(-rx * BASE_MAX), -1000, 1000)
 
 
 def compute_elbow(ry: float) -> int:
