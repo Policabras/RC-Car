@@ -58,6 +58,7 @@ board_manager:
 ```bash
 arduino-cli core update-index
 arduino-cli core install esp32:esp32@2.0.17
+arduino-cli lib install "ESP32Servo"
 ```
 
 ---
