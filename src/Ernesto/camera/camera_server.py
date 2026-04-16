@@ -1,14 +1,15 @@
 import cv2
 import os
+import json
 from datetime import datetime
-from flask import Flask, Response
+from flask import Flask, Response, render_template_string
 from flask_cors import CORS
 import paho.mqtt.client as mqtt
 
 # ==========================
-# MQTT
+# MQTT CONFIG
 # ==========================
-MQTT_BROKER = "192.168.1.230"   # cambia por la IP de tu computadora
+MQTT_BROKER = "192.168.3.4"
 MQTT_PORT = 1883
 MQTT_TOPIC = "robot/qr"
 
@@ -22,22 +23,29 @@ app = Flask(__name__)
 CORS(app)
 
 # ==========================
-# CÁMARA
+# CAMARAS IP
 # ==========================
-cap = cv2.VideoCapture(0,  cv2.CAP_DSHOW)#, cv2.CAP_V4L2)
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+sources = [
+    "http://192.168.3.16:8081/mjpeg/0",
+    "http://192.168.3.16:8081/mjpeg/1"
+]
+
+caps = [cv2.VideoCapture(src) for src in sources]
 
 detector = cv2.QRCodeDetector()
 
 os.makedirs("qr_data", exist_ok=True)
 
-last_qr = ""
+# Último QR por cámara
+last_qr = {}
 
 # ==========================
-# STREAM + QR
+# GENERADOR POR CAMARA
 # ==========================
-def gen_frames():
+def gen_frames_cam(cam_id):
     global last_qr
+
+    cap = caps[cam_id]
 
     while True:
         success, frame = cap.read()
@@ -45,64 +53,115 @@ def gen_frames():
         if not success:
             continue
 
-        small = cv2.resize(frame, (640, 480))        
-        retval, decoded_info, points, _ = detector.detectAndDecodeMulti(small)
+        small = cv2.resize(frame, (640, 480))
 
-        if retval and points is not None and len(points) > 0:
+        # ✅ DETECCIÓN ESTABLE (1 QR)
+        data, points, _ = detector.detectAndDecode(small)
+
+        if points is not None and data:
+
+            pts = points.astype(int)
+
             scale_x = frame.shape[1] / 640
             scale_y = frame.shape[0] / 480
 
-            for i, data in enumerate(decoded_info):
-                if data:
-                    pts = points[i].astype(int)
+            # Dibujar QR
+            for j in range(4):
+                pt1 = (int(pts[j][0] * scale_x), int(pts[j][1] * scale_y))
+                pt2 = (int(pts[(j+1)%4][0] * scale_x), int(pts[(j+1)%4][1] * scale_y))
+                cv2.line(frame, pt1, pt2, (0,255,0), 2)
 
-                    for j in range(4):
-                        pt1 = (int(pts[j][0] * scale_x), int(pts[j][1] * scale_y))
-                        pt2 = (int(pts[(j+1)%4][0] * scale_x), int(pts[(j+1)%4][1] * scale_y))
-                        cv2.line(frame, pt1, pt2, (0,255,0), 2)
+            # Texto
+            cv2.putText(frame, data,
+                        (int(pts[0][0]*scale_x), int(pts[0][1]*scale_y)-10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0,255,0),
+                        2)
 
-                    cv2.putText(frame, data,
-                                (int(pts[0][0]*scale_x), int(pts[0][1]*scale_y)-10),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                (0,255,0),
-                                2)
+            # Evitar duplicados por cámara
+            if data != last_qr.get(cam_id):
+                last_qr[cam_id] = data
 
-                    if data != last_qr:
-                        last_qr = data
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Guardar imagen
+                img_path = f"qr_data/cam{cam_id}_{timestamp}.png"
+                cv2.imwrite(img_path, frame)
 
-                        img_path = f"qr_data/{timestamp}.png"
-                        txt_path = f"qr_data/{timestamp}.txt"
+                # Guardar texto
+                txt_path = f"qr_data/cam{cam_id}_{timestamp}.txt"
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(data)
 
-                        cv2.imwrite(img_path, frame)
+                # Coordenadas reales
+                pts_scaled = []
+                for p in pts:
+                    pts_scaled.append({
+                        "x": int(p[0] * scale_x),
+                        "y": int(p[1] * scale_y)
+                    })
 
-                        with open(txt_path, "w", encoding="utf-8") as f:
-                            f.write(data)
+                # Payload MQTT
+                payload = {
+                    "qr": data,
+                    "camera": cam_id,
+                    "points": pts_scaled,
+                    "timestamp": datetime.now().isoformat()
+                }
 
-                        print(f"QR guardado: {data}")
+                client.publish(MQTT_TOPIC, json.dumps(payload))
+                print(f"[CAM {cam_id}] QR detectado:", payload)
 
-                        # MQTT publish
-                        client.publish(MQTT_TOPIC, data)
-
+        # Enviar frame
         ret, buffer = cv2.imencode('.jpg', frame)
-
         if not ret:
             continue
 
-        frame_bytes = buffer.tobytes()
-
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
 # ==========================
-# VIDEO ROUTE
+# ROUTES VIDEO
 # ==========================
-@app.route('/video_feed')
-def video_feed():
-    return Response(gen_frames(),
+@app.route('/video_feed/0')
+def video_feed_0():
+    return Response(gen_frames_cam(0),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed/1')
+def video_feed_1():
+    return Response(gen_frames_cam(1),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# ==========================
+# PAGINA PRINCIPAL
+# ==========================
+@app.route('/')
+def index():
+    return render_template_string("""
+    <html>
+    <head>
+        <title>Multi Cámara QR</title>
+    </head>
+    <body>
+        <h1>Streaming Cámaras con QR</h1>
+
+        <div style="display: flex; gap: 20px;">
+            <div>
+                <h2>Cámara 0</h2>
+                <img src="/video_feed/0" width="480">
+            </div>
+
+            <div>
+                <h2>Cámara 1</h2>
+                <img src="/video_feed/1" width="480">
+            </div>
+        </div>
+
+    </body>
+    </html>
+    """)
 
 # ==========================
 # MAIN
