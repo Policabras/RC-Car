@@ -11,14 +11,21 @@ static const int TXD2 = 17;
 static const long UART_BAUD = 115200;
 
 // ==============================
-// I2C: ESP32 -> TCA9548A -> PCA9685
+// I2C: ESP32 -> TCA9548A -> PCA9685 / AS5600
 // ==============================
 static const int I2C_SDA = 5;
 static const int I2C_SCL = 18;
 
-static const uint8_t TCA_ADDR    = 0x70;
-static const uint8_t TCA_CHANNEL = 0;
-static const uint8_t PCA_ADDR    = 0x40;
+static const uint8_t TCA_ADDR = 0x70;
+
+// PCA9685 en canal 0 del TCA
+static const uint8_t TCA_CHANNEL_PCA = 0;
+static const uint8_t PCA_ADDR = 0x40;
+
+// AS5600 en canales 1 y 2 del TCA
+static const uint8_t AS5600_ADDR = 0x36;
+static const uint8_t ENC_LEFT_CH = 1;
+static const uint8_t ENC_RIGHT_CH = 2;
 
 Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(PCA_ADDR);
 
@@ -95,11 +102,11 @@ const int ARM_BASE_HOME = 90;
 
 const int ARM_ELBOW_MIN  = 0;
 const int ARM_ELBOW_MAX  = 180;
-const int ARM_ELBOW_HOME = 90;
+const int ARM_ELBOW_HOME = 0;
 
 const int ARM_WRIST_MIN  = 0;
 const int ARM_WRIST_MAX  = 180;
-const int ARM_WRIST_HOME = 90;
+const int ARM_WRIST_HOME = 10;
 
 const int ARM_GRIP_MIN   = 0;
 const int ARM_GRIP_MAX   = 180;
@@ -139,6 +146,33 @@ unsigned long lastDebugPrint = 0;
 
 const unsigned long FAILSAFE_MS = 300;
 const unsigned long DEBUG_PRINT_MS = 300;
+
+// ==============================
+// ENCODERS AS5600
+// ==============================
+// v = (delta_deg / dt_s) * 0.000498
+// Ya incluye:
+// - conversión a radianes
+// - relación de engranes 35/20 = 1.75
+// - radio del sprocket con D = 99.917 mm
+const float K_VEL_MS_PER_DEGPS = 0.000498f;
+
+float angleLeftDeg = 0.0f;
+float angleRightDeg = 0.0f;
+float prevAngleLeftDeg = 0.0f;
+float prevAngleRightDeg = 0.0f;
+
+float velLeftMS = 0.0f;
+float velRightMS = 0.0f;
+
+uint16_t rawLeft = 0;
+uint16_t rawRight = 0;
+
+bool leftEncoderOnline  = false;
+bool rightEncoderOnline = false;
+
+unsigned long lastEncoderUpdate = 0;
+bool encodersInitialized = false;
 
 // ==============================
 // DEBUG FLIPPERS
@@ -240,6 +274,35 @@ void printFlipperDebug() {
 }
 
 // ==============================
+// DEBUG PRINT ENCODERS
+// ==============================
+void printEncoderDebug() {
+  Serial.println("----- DEBUG ENCODERS -----");
+
+  Serial.print("LEFT online: ");
+  Serial.println(leftEncoderOnline ? "SI" : "NO");
+  Serial.print("LEFT raw: ");
+  Serial.println(rawLeft);
+  Serial.print("LEFT deg: ");
+  Serial.println(angleLeftDeg, 2);
+  Serial.print("LEFT vel (m/s): ");
+  Serial.println(velLeftMS, 4);
+
+  Serial.println();
+
+  Serial.print("RIGHT online: ");
+  Serial.println(rightEncoderOnline ? "SI" : "NO");
+  Serial.print("RIGHT raw: ");
+  Serial.println(rawRight);
+  Serial.print("RIGHT deg: ");
+  Serial.println(angleRightDeg, 2);
+  Serial.print("RIGHT vel (m/s): ");
+  Serial.println(velRightMS, 4);
+
+  Serial.println("--------------------------");
+}
+
+// ==============================
 // Motores BTS
 // ==============================
 void setMotorBTS(int pwmForwardChannel, int pwmBackwardChannel, int value, float scale = 1.0f) {
@@ -321,7 +384,7 @@ void writeServoPCA(uint8_t channel, int angle, bool inverted = false) {
   int finalAngle = applyInvert(angle, inverted);
   uint16_t pulse = angleToPCA(finalAngle);
 
-  tcaSelect(TCA_CHANNEL);
+  tcaSelect(TCA_CHANNEL_PCA);
   pca.setPWM(channel, 0, pulse);
 }
 
@@ -362,10 +425,7 @@ void updateArm() {
 }
 
 void setupPCA() {
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(100000);
-
-  tcaSelect(TCA_CHANNEL);
+  tcaSelect(TCA_CHANNEL_PCA);
   pca.begin();
   pca.setOscillatorFrequency(27000000);
   pca.setPWMFreq(PCA_SERVO_FREQ);
@@ -378,6 +438,109 @@ void setupPCA() {
   gripPos  = ARM_GRIP_HOME;
 
   writeArm();
+}
+
+// ==============================
+// AS5600
+// ==============================
+bool readAS5600Raw(uint8_t tcaChannel, uint16_t &rawOut) {
+  rawOut = 0;
+
+  tcaSelect(tcaChannel);
+
+  Wire.beginTransmission(AS5600_ADDR);
+  Wire.write(0x0C); // RAW ANGLE high byte
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  uint8_t requested = Wire.requestFrom((int)AS5600_ADDR, 2);
+  if (requested != 2 || Wire.available() < 2) {
+    return false;
+  }
+
+  uint16_t highByte = Wire.read();
+  uint16_t lowByte  = Wire.read();
+
+  rawOut = ((highByte << 8) | lowByte) & 0x0FFF;
+  return true;
+}
+
+float rawToDegrees(uint16_t raw) {
+  return (raw * 360.0f) / 4096.0f;
+}
+
+float computeLinearVelocityMS(float currentDeg, float previousDeg, float dtSec) {
+  float delta = currentDeg - previousDeg;
+
+  // corregir wrap-around 0/360
+  if (delta > 180.0f) delta -= 360.0f;
+  if (delta < -180.0f) delta += 360.0f;
+
+  // En tu caso: adelante baja el ángulo, así que invertimos el signo
+  return -(delta / dtSec) * K_VEL_MS_PER_DEGPS;
+}
+
+void setupEncoders() {
+  leftEncoderOnline  = readAS5600Raw(ENC_LEFT_CH, rawLeft);
+  rightEncoderOnline = readAS5600Raw(ENC_RIGHT_CH, rawRight);
+
+  if (leftEncoderOnline) {
+    prevAngleLeftDeg = rawToDegrees(rawLeft);
+    angleLeftDeg = prevAngleLeftDeg;
+  } else {
+    prevAngleLeftDeg = 0.0f;
+    angleLeftDeg = 0.0f;
+  }
+
+  if (rightEncoderOnline) {
+    prevAngleRightDeg = rawToDegrees(rawRight);
+    angleRightDeg = prevAngleRightDeg;
+  } else {
+    prevAngleRightDeg = 0.0f;
+    angleRightDeg = 0.0f;
+  }
+
+  velLeftMS = 0.0f;
+  velRightMS = 0.0f;
+
+  lastEncoderUpdate = millis();
+  encodersInitialized = true;
+}
+
+void updateEncoders() {
+  if (!encodersInitialized) return;
+
+  unsigned long now = millis();
+  float dtSec = (now - lastEncoderUpdate) / 1000.0f;
+
+  if (dtSec <= 0.0f) return;
+
+  lastEncoderUpdate = now;
+
+  uint16_t newRawLeft = 0;
+  uint16_t newRawRight = 0;
+
+  leftEncoderOnline  = readAS5600Raw(ENC_LEFT_CH, newRawLeft);
+  rightEncoderOnline = readAS5600Raw(ENC_RIGHT_CH, newRawRight);
+
+  if (leftEncoderOnline) {
+    rawLeft = newRawLeft;
+    angleLeftDeg = rawToDegrees(rawLeft);
+    velLeftMS = computeLinearVelocityMS(angleLeftDeg, prevAngleLeftDeg, dtSec);
+    prevAngleLeftDeg = angleLeftDeg;
+  } else {
+    velLeftMS = 0.0f;
+  }
+
+  if (rightEncoderOnline) {
+    rawRight = newRawRight;
+    angleRightDeg = rawToDegrees(rawRight);
+    velRightMS = computeLinearVelocityMS(angleRightDeg, prevAngleRightDeg, dtSec);
+    prevAngleRightDeg = angleRightDeg;
+  } else {
+    velRightMS = 0.0f;
+  }
 }
 
 // ==============================
@@ -456,6 +619,9 @@ void setup() {
 
   RaspiSerial.begin(UART_BAUD, SERIAL_8N1, RXD2, TXD2);
 
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(400000);
+
   setupPWM();
 
   stopDriveMotors();
@@ -472,6 +638,7 @@ void setup() {
   pinMode(FLIPPER_LEN, OUTPUT); digitalWrite(FLIPPER_LEN, HIGH);
 
   setupPCA();
+  setupEncoders();
 
   lastPacketTime = millis();
   lastArmUpdate  = millis();
@@ -479,6 +646,7 @@ void setup() {
 
   Serial.println("ESP32 listo. Esperando paquetes UART...");
   printFlipperDebug();
+  printEncoderDebug();
 }
 
 // ==============================
@@ -524,6 +692,7 @@ void loop() {
   }
 
   updateArm();
+  updateEncoders();
 
   if (millis() - lastPacketTime > FAILSAFE_MS) {
     stopDriveMotors();
@@ -539,6 +708,7 @@ void loop() {
   if (millis() - lastDebugPrint >= DEBUG_PRINT_MS) {
     lastDebugPrint = millis();
     printFlipperDebug();
+    printEncoderDebug();
   }
 
   delay(2);
