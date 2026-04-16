@@ -210,6 +210,8 @@ function App() {
       { label: "Wrist pos", value: formatMaybeNumber(actuators?.wrist_pos) },
       { label: "Grip cmd", value: formatMaybeNumber(actuators?.grip_cmd) },
       { label: "Grip pos", value: formatMaybeNumber(actuators?.grip_pos) },
+      { label: "Vel R", value: formatMaybeNumber(actuators?.grip_cmd) },
+      { label: "Vel L", value: formatMaybeNumber(actuators?.grip_pos) },
       {
         label: "Link OK",
         value:
