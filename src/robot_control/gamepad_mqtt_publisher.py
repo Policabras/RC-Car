@@ -92,6 +92,7 @@ AXIS_R2 = int(os.getenv("AXIS_R2", "5"))
 
 # Button mapping
 BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "9"))
+BTN_DRIVE_MODE_TOGGLE = int(os.getenv("BTN_DRIVE_MODE_TOGGLE", "8"))
 
 # Mapeo típico estilo Xbox:
 # A=0, B=1, X=2, Y=3
@@ -556,8 +557,12 @@ def wait_for_controller() -> pygame.joystick.Joystick | None:
 # =========================================================
 # LOGICA DE MOVIMIENTO
 # =========================================================
-def compute_drive(lx: float, l2: float, r2: float) -> tuple[int, int]:
+def compute_drive(lx: float, l2: float, r2: float, inverted_drive: bool = False) -> tuple[int, int]:
     v = int((r2 - l2) * V_MAX)
+
+    if inverted_drive:
+        v = -v
+
     w = int(lx * W_MAX)
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
@@ -694,6 +699,7 @@ def main() -> None:
         options_press_time = 0.0
         shutdown_triggered = False
         rumble_on = False
+        drive_mode_inverted = False
         cmd = CommandState()
 
         try:
@@ -713,11 +719,7 @@ def main() -> None:
                     total_events += 1
                     LAST_RUNTIME_SNAPSHOT["last_event_ts"] = now
 
-                    if event.type == pygame.QUIT:
-                        logger.warning("[PYGAME] Evento QUIT recibido")
-                        running = False
-
-                    elif event.type == pygame.JOYDEVICEREMOVED:
+                    if event.type == pygame.JOYDEVICEREMOVED:
                         logger.warning(
                             "[CONTROL] JOYDEVICEREMOVED instance_id=%s current=%s",
                             getattr(event, "instance_id", None),
@@ -728,11 +730,19 @@ def main() -> None:
 
                     elif event.type == pygame.JOYBUTTONDOWN:
                         logger.debug("[CONTROL] BUTTON DOWN %s", getattr(event, "button", None))
+
                         if event.button == BTN_OPTIONS:
                             options_pressed = True
                             options_press_time = now
                             shutdown_triggered = False
                             logger.info("[SYSTEM] Botón OPTIONS presionado")
+
+                        elif event.button == BTN_DRIVE_MODE_TOGGLE:
+                            drive_mode_inverted = not drive_mode_inverted
+                            logger.info(
+                                "[DRIVE] Modo de tracción cambiado a: %s",
+                                "INVERTIDO" if drive_mode_inverted else "NORMAL",
+                            )
 
                     elif event.type == pygame.JOYBUTTONUP:
                         logger.debug("[CONTROL] BUTTON UP %s", getattr(event, "button", None))
@@ -764,7 +774,7 @@ def main() -> None:
                 grip_open = safe_get_button(joystick, BTN_GRIP_OPEN) == 1   # X
                 grip_close = safe_get_button(joystick, BTN_GRIP_CLOSE) == 1 # B
 
-                drive_v, drive_w = compute_drive(lx, l2, r2)
+                drive_v, drive_w = compute_drive(lx, l2, r2, drive_mode_inverted)
 
                 cmd = CommandState(
                     v=drive_v,
@@ -814,10 +824,11 @@ def main() -> None:
                 if now - last_print >= PRINT_INTERVAL:
                     last_print = now
                     logger.info(
-                        "[STAT] v=%4d w=%4d f=%4d base=%4d elbow=%4d wrist=%4d grip=%4d "
+                        "[STAT] mode=%s v=%4d w=%4d f=%4d base=%4d elbow=%4d wrist=%4d grip=%4d "
                         "LX=%+.2f LY=%+.2f RX=%+.2f RY=%+.2f L2=%.2f R2=%.2f HATY=%+d "
                         "Y=%d A=%d X=%d B=%d "
                         "%s loops=%s events=%s mqtt=%s got=%s mem=%.2fMB",
+                        "INV" if drive_mode_inverted else "NOR",
                         cmd.v,
                         cmd.w,
                         cmd.f,
@@ -861,6 +872,7 @@ def main() -> None:
                             "grip_open": grip_open,
                             "grip_close": grip_close,
                             "hat_y": hat_y,
+                            "drive_mode_inverted": drive_mode_inverted,
                         },
                     )
 
