@@ -1,0 +1,1 @@
+/Users/carlosantoniotovargarcia/projects/RC-Car/.venv/bin/python camera_server.py

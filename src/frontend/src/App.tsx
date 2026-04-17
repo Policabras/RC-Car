@@ -67,11 +67,25 @@ type CommandPayload = {
   [key: string]: unknown;
 };
 
+type QrPayload = {
+  qr: string;
+  camera: number;
+  points: { x: number; y: number }[];
+  timestamp: string;
+};
+
+type QrData = {
+  topic: string;
+  subStream: string | null;
+  payload: QrPayload;
+};
+
 type InitialTelemetry = {
   system: SystemPayload | null;
   status: StatusData | null;
   actuators: ActuatorsData | null;
   cmd: unknown;
+  qr: QrData | null;
 };
 
 const BACKEND_URL = "http://localhost:3000";
@@ -89,6 +103,7 @@ function App() {
   const [statusData, setStatusData] = useState<StatusData | null>(null);
   const [actuatorsData, setActuatorsData] = useState<ActuatorsData | null>(null);
   const [cmdData, setCmdData] = useState<CommandPayload | null>(null);
+  const [qrData, setQrData] = useState<QrData | null>(null);
 
   const [lastTelemetryAt, setLastTelemetryAt] = useState<number | null>(null);
   const [lastUpdateSeconds, setLastUpdateSeconds] = useState(0);
@@ -127,6 +142,7 @@ function App() {
       setStatusData(data.status);
       setActuatorsData(data.actuators);
       setCmdData(normalizeCmdData(data.cmd));
+      setQrData(data.qr);
       markTelemetry();
     });
 
@@ -147,6 +163,11 @@ function App() {
 
     socket.on("cmdData", (data: unknown) => {
       setCmdData(normalizeCmdData(data));
+      markTelemetry();
+    });
+
+    socket.on("qrData", (data: QrData) => {
+      setQrData(data);
       markTelemetry();
     });
 
@@ -281,28 +302,50 @@ function App() {
         <main className="workspace-grid">
           <section className="column-stack">
             <Panel
-              title="Trayectoria"
-              subtitle="Odometría pendiente de integrar"
-              tag="Track"
+              title="Receptor QR"
+              subtitle="Último QR recibido desde MQTT"
+              tag="QR"
               bodyClassName="panel-no-padding"
             >
               <div className="trajectory-stage">
                 <div className="trajectory-grid"></div>
                 <div className="trajectory-center">
-                  <div className="trajectory-badge">Placeholder</div>
-                  <div className="trajectory-title">
-                    Odometría aún no integrada
+                  <div className="trajectory-badge">
+                    {qrData?.payload?.camera !== undefined
+                      ? `Cámara ${qrData.payload.camera}`
+                      : "Sin detección"}
                   </div>
+
+                  <div className="trajectory-title">
+                    {qrData?.payload?.qr ?? "Esperando lectura de QR"}
+                  </div>
+
                   <div className="trajectory-text">
-                    Aquí se mostrará la trayectoria real cuando el módulo esté listo.
+                    {qrData?.payload?.timestamp
+                      ? `Timestamp: ${qrData.payload.timestamp}`
+                      : "Aún no se ha recibido ningún código QR desde el backend."}
                   </div>
                 </div>
               </div>
 
               <div className="mini-metric-row">
-                <MiniMetric label="Pos X" value="--" />
-                <MiniMetric label="Pos Y" value="--" />
-                <MiniMetric label="Ángulo theta" value="--" />
+                <MiniMetric label="QR" value={qrData?.payload?.qr ?? "--"} />
+                <MiniMetric
+                  label="Cámara"
+                  value={
+                    qrData?.payload?.camera !== undefined
+                      ? String(qrData.payload.camera)
+                      : "--"
+                  }
+                />
+                <MiniMetric
+                  label="Puntos"
+                  value={
+                    qrData?.payload?.points
+                      ? String(qrData.payload.points.length)
+                      : "--"
+                  }
+                />
               </div>
             </Panel>
 

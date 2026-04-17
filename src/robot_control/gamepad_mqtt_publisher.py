@@ -578,7 +578,7 @@ def compute_drive(
 
     if inverted_drive:
         v = -v
-        w = -w
+        w = w
 
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
