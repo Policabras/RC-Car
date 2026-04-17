@@ -106,6 +106,7 @@ function App() {
   const [actuatorsData, setActuatorsData] = useState<ActuatorsData | null>(null);
   const [cmdData, setCmdData] = useState<CommandPayload | null>(null);
   const [qrData, setQrData] = useState<QrData | null>(null);
+  const [visibleQrOverlay, setVisibleQrOverlay] = useState<QrPayload | null>(null);
 
   const [lastTelemetryAt, setLastTelemetryAt] = useState<number | null>(null);
   const [lastUpdateSeconds, setLastUpdateSeconds] = useState(0);
@@ -177,6 +178,32 @@ function App() {
       socket.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    if (!qrData?.payload) {
+      return;
+    }
+
+    setVisibleQrOverlay(qrData.payload);
+
+    const timeoutId = window.setTimeout(() => {
+      setVisibleQrOverlay((current) => {
+        if (
+          current?.timestamp === qrData.payload.timestamp &&
+          current?.camera === qrData.payload.camera &&
+          current?.qr === qrData.payload.qr
+        ) {
+          return null;
+        }
+
+        return current;
+      });
+    }, 3000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [qrData]);
 
   const system = systemData?.payload;
   const actuators = actuatorsData?.payload;
@@ -378,7 +405,7 @@ function App() {
                 heightClassName="camera-stage-large"
                 onLoad={() => setFrontCameraLive(true)}
                 onError={() => setFrontCameraLive(false)}
-                qrOverlay={qrData?.payload?.camera === 0 ? qrData.payload : null}
+                qrOverlay={visibleQrOverlay?.camera === 0 ? visibleQrOverlay : null}
               />
             </Panel>
 
@@ -397,7 +424,7 @@ function App() {
                 heightClassName="camera-stage-medium"
                 onLoad={() => setRearCameraLive(true)}
                 onError={() => setRearCameraLive(false)}
-                qrOverlay={qrData?.payload?.camera === 1 ? qrData.payload : null}
+                qrOverlay={visibleQrOverlay?.camera === 1 ? visibleQrOverlay : null}
               />
             </Panel>
           </section>
