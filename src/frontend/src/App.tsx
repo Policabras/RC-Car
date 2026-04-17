@@ -88,7 +88,7 @@ type InitialTelemetry = {
   qr: QrData | null;
 };
 
-const BACKEND_URL = "http://localhost:3000";
+const BACKEND_URL = "http://192.168.3.4:3000";
 const FRONT_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/0";
 const REAR_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/1";
 
