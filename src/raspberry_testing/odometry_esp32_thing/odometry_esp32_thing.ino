@@ -7,11 +7,13 @@
 // IMPORTANTE:
 // - Este Serial se usa para RECIBIR comandos y ENVIAR telemetría.
 // - NO metas Serial.print de debug fuera de sendTelemetry().
+// - NUEVO PROTOCOLO ESPERADO:
+//   <v,w,f,base,elbow,wrist,grip,home>
 // =====================================================
 static const long SERIAL_BAUD = 115200;
 
-bool leftOk;
-bool rightOk;
+bool leftOk = false;
+bool rightOk = false;
 
 // =====================================================
 // OPCIONES
@@ -100,6 +102,7 @@ int base_cmd  = 0;
 int elbow_cmd = 0;
 int wrist_cmd = 0;
 int grip_cmd  = 0;
+int home_cmd  = 0;
 
 unsigned long lastPacketTime = 0;
 const unsigned long FAILSAFE_MS = 300;
@@ -235,6 +238,12 @@ const char* DEVICE_ID = "pi_robot_01";
 const char* STREAM_NAME = "actuators";
 const unsigned long TELEMETRY_PERIOD_MS = 100;
 unsigned long lastTelemetryMs = 0;
+
+// =====================================================
+// PROTOTIPOS
+// =====================================================
+void writeServoPCA(uint8_t channel, int angle, bool inverted = false);
+void moveArmToHome();
 
 // =====================================================
 // Helpers
@@ -587,7 +596,7 @@ void updateFlipperTelemetryEstimate() {
 // =====================================================
 // Escritura PCA9685
 // =====================================================
-void writeServoPCA(uint8_t channel, int angle, bool inverted = false) {
+void writeServoPCA(uint8_t channel, int angle, bool inverted) {
   int finalAngle = applyInvert(angle, inverted);
   uint16_t pulse = angleToPCA(finalAngle);
 
@@ -636,9 +645,19 @@ void updateArm() {
 
 // =====================================================
 // Parsear paquetes tipo
-// <v,w,f,base,elbow,wrist,grip>
+// <v,w,f,base,elbow,wrist,grip,home>
+// leyendo desde Serial
 // =====================================================
-bool readPacket(int &v, int &w, int &f, int &base, int &elbow, int &wrist, int &grip) {
+bool readPacket(
+  int &v,
+  int &w,
+  int &f,
+  int &base,
+  int &elbow,
+  int &wrist,
+  int &grip,
+  int &home
+) {
   static String buffer = "";
 
   while (Serial.available()) {
@@ -648,20 +667,20 @@ bool readPacket(int &v, int &w, int &f, int &base, int &elbow, int &wrist, int &
       buffer = "";
     }
     else if (c == '>') {
-      int values[7] = {0};
+      int values[8] = {0};
       int idx = 0;
       int start = 0;
 
       for (int i = 0; i <= buffer.length(); i++) {
         if (i == buffer.length() || buffer[i] == ',') {
-          if (idx < 7) {
+          if (idx < 8) {
             values[idx++] = buffer.substring(start, i).toInt();
           }
           start = i + 1;
         }
       }
 
-      if (idx == 7) {
+      if (idx == 8) {
         v     = values[0];
         w     = values[1];
         f     = values[2];
@@ -669,6 +688,7 @@ bool readPacket(int &v, int &w, int &f, int &base, int &elbow, int &wrist, int &
         elbow = values[4];
         wrist = values[5];
         grip  = values[6];
+        home  = values[7];
         return true;
       }
     }
@@ -719,6 +739,8 @@ void sendTelemetry() {
   Serial.print(wrist_cmd);
   Serial.print(",\"grip_cmd\":");
   Serial.print(grip_cmd);
+  Serial.print(",\"home_cmd\":");
+  Serial.print(home_cmd);
 
   Serial.print(",\"flipper_pos\":");
   Serial.print((int)flipperPos);
@@ -842,9 +864,9 @@ void setup() {
 // Loop
 // =====================================================
 void loop() {
-  int newV, newW, newF, newBase, newElbow, newWrist, newGrip;
+  int newV, newW, newF, newBase, newElbow, newWrist, newGrip, newHome;
 
-  if (readPacket(newV, newW, newF, newBase, newElbow, newWrist, newGrip)) {
+  if (readPacket(newV, newW, newF, newBase, newElbow, newWrist, newGrip, newHome)) {
     if (USE_CROSSED_DRIVE_MAPPING) {
       v_cmd = clampInt(-newW, -1000, 1000);
       w_cmd = clampInt(newV, -1000, 1000);
@@ -855,10 +877,16 @@ void loop() {
 
     f_cmd = clampInt(newF, -1000, 1000);
 
-    base_cmd  = clampInt(newBase, -1000, 1000);
-    elbow_cmd = clampInt(newElbow, -1000, 1000);
-    wrist_cmd = clampInt(newWrist, -1000, 1000);
-    grip_cmd  = clampInt(newGrip, -1000, 1000);
+    home_cmd = (newHome != 0) ? 1 : 0;
+
+    if (home_cmd == 1) {
+      moveArmToHome();
+    } else {
+      base_cmd  = clampInt(newBase, -1000, 1000);
+      elbow_cmd = clampInt(newElbow, -1000, 1000);
+      wrist_cmd = clampInt(newWrist, -1000, 1000);
+      grip_cmd  = clampInt(newGrip, -1000, 1000);
+    }
 
     lastPacketTime = millis();
 
@@ -867,8 +895,13 @@ void loop() {
 
   updateDriveControl();
   updateFlipperTelemetryEstimate();
-  updateArm();
 
+  // Si home_cmd está activo, no actualizamos el brazo por velocidad
+  if (home_cmd == 0) {
+    updateArm();
+  }
+
+  // Failsafe
   if (millis() - lastPacketTime > FAILSAFE_MS) {
     v_cmd = 0;
     w_cmd = 0;
@@ -877,6 +910,7 @@ void loop() {
     elbow_cmd = 0;
     wrist_cmd = 0;
     grip_cmd = 0;
+    home_cmd = 0;
 
     stopDriveMotors();
     stopFlippers();
