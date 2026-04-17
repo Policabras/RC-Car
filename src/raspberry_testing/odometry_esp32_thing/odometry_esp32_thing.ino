@@ -10,6 +10,9 @@
 // =====================================================
 static const long SERIAL_BAUD = 115200;
 
+bool leftOk;
+bool rightOk;
+
 // =====================================================
 // OPCIONES
 // =====================================================
@@ -486,8 +489,8 @@ void updateDriveControl() {
   leftTargetRpm  = (leftBase  / 1000.0f) * MAX_WHEEL_RPM;
   rightTargetRpm = (rightBase / 1000.0f) * MAX_WHEEL_RPM;
 
-  bool leftOk  = updateWheelSpeedFromAS5600(encLeft, ENC_LEFT_CH, LEFT_ENCODER_INVERTED, dt);
-  bool rightOk = updateWheelSpeedFromAS5600(encRight, ENC_RIGHT_CH, RIGHT_ENCODER_INVERTED, dt);
+  leftOk  = updateWheelSpeedFromAS5600(encLeft, ENC_LEFT_CH, LEFT_ENCODER_INVERTED, dt);
+  rightOk = updateWheelSpeedFromAS5600(encRight, ENC_RIGHT_CH, RIGHT_ENCODER_INVERTED, dt);
 
   // Si falla encoder, vuelve al modo original open-loop
   if (!leftOk || !rightOk) {
@@ -545,7 +548,6 @@ void writeFlippersMotor(int cmd) {
     ledcWrite(CH_FLIPPER_LPWM, 0);
   }
 }
-
 void stopFlippers() {
   ledcWrite(CH_FLIPPER_RPWM, 0);
   ledcWrite(CH_FLIPPER_LPWM, 0);
@@ -731,6 +733,11 @@ void sendTelemetry() {
   Serial.print(leftMixed);
   Serial.print(",\"right_mix\":");
   Serial.print(rightMixed);
+
+  Serial.print(",\"enc_right_enable\":");
+  Serial.print(rightOk);
+  Serial.print(",\"enc_left_enable\":");
+  Serial.print(leftOk);
 
   Serial.print(",\"left_target_rpm\":");
   Serial.print(leftTargetRpm, 2);
