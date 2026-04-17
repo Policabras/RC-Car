@@ -750,4 +750,140 @@ void sendTelemetry() {
   Serial.print(encLeft.speedRpm, 2);
   Serial.print(",\"right_speed_rpm\":");
   Serial.print(encRight.speedRpm, 2);
-  Serial.print
+  Serial.print(",\"left_enc_raw\":");
+  Serial.print(encLeft.raw);
+  Serial.print(",\"right_enc_raw\":");
+  Serial.print(encRight.raw);
+
+  Serial.print(",\"link_ok\":");
+  Serial.print((millis() - lastPacketTime <= FAILSAFE_MS) ? "true" : "false");
+
+  Serial.println("}}");
+}
+
+// =====================================================
+// Setup PWM motores
+// =====================================================
+void setupPWM() {
+  ledcSetup(CH_RPWM_L, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_LPWM_L, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_RPWM_R, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_LPWM_R, PWM_FREQ, PWM_RES);
+
+  ledcAttachPin(RPWM_L, CH_RPWM_L);
+  ledcAttachPin(LPWM_L, CH_LPWM_L);
+  ledcAttachPin(RPWM_R, CH_RPWM_R);
+  ledcAttachPin(LPWM_R, CH_LPWM_R);
+
+  ledcSetup(CH_FLIPPER_RPWM, PWM_FREQ, PWM_RES);
+  ledcSetup(CH_FLIPPER_LPWM, PWM_FREQ, PWM_RES);
+
+  ledcAttachPin(FLIPPER_RPWM, CH_FLIPPER_RPWM);
+  ledcAttachPin(FLIPPER_LPWM, CH_FLIPPER_LPWM);
+}
+
+// =====================================================
+// Setup PCA9685
+// =====================================================
+void setupPCA() {
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);
+
+  tcaSelect(TCA_CHANNEL);
+  pca.begin();
+  pca.setOscillatorFrequency(27000000);
+  pca.setPWMFreq(PCA_SERVO_FREQ);
+
+  delay(50);
+
+  flipperPos = FLIPPER_HOME;
+  moveArmToHome();
+}
+
+// =====================================================
+// Setup encoders AS5600
+// =====================================================
+void setupAS5600Encoders() {
+  initWheelEncoder(encLeft, ENC_LEFT_CH);
+  initWheelEncoder(encRight, ENC_RIGHT_CH);
+}
+
+// =====================================================
+// Setup
+// =====================================================
+void setup() {
+  Serial.begin(SERIAL_BAUD);
+  delay(300);
+
+  setupPWM();
+  stopDriveMotors();
+  stopFlippers();
+
+  pinMode(REN_L, OUTPUT); digitalWrite(REN_L, HIGH);
+  pinMode(LEN_L, OUTPUT); digitalWrite(LEN_L, HIGH);
+  pinMode(REN_R, OUTPUT); digitalWrite(REN_R, HIGH);
+  pinMode(LEN_R, OUTPUT); digitalWrite(LEN_R, HIGH);
+
+  pinMode(FLIPPER_REN, OUTPUT); digitalWrite(FLIPPER_REN, HIGH);
+  pinMode(FLIPPER_LEN, OUTPUT); digitalWrite(FLIPPER_LEN, HIGH);
+
+  setupPCA();
+  setupAS5600Encoders();
+  resetDrivePIDState();
+
+  lastPacketTime      = millis();
+  lastFlipperUpdate   = millis();
+  lastArmUpdate       = millis();
+  lastTelemetryMs     = 0;
+  lastDriveControlMs  = millis();
+}
+
+// =====================================================
+// Loop
+// =====================================================
+void loop() {
+  int newV, newW, newF, newBase, newElbow, newWrist, newGrip;
+
+  if (readPacket(newV, newW, newF, newBase, newElbow, newWrist, newGrip)) {
+    if (USE_CROSSED_DRIVE_MAPPING) {
+      v_cmd = clampInt(-newW, -1000, 1000);
+      w_cmd = clampInt(newV, -1000, 1000);
+    } else {
+      v_cmd = clampInt(newV, -1000, 1000);
+      w_cmd = clampInt(newW, -1000, 1000);
+    }
+
+    f_cmd = clampInt(newF, -1000, 1000);
+
+    base_cmd  = clampInt(newBase, -1000, 1000);
+    elbow_cmd = clampInt(newElbow, -1000, 1000);
+    wrist_cmd = clampInt(newWrist, -1000, 1000);
+    grip_cmd  = clampInt(newGrip, -1000, 1000);
+
+    lastPacketTime = millis();
+
+    writeFlippersMotor(f_cmd);
+  }
+
+  updateDriveControl();
+  updateFlipperTelemetryEstimate();
+  updateArm();
+
+  if (millis() - lastPacketTime > FAILSAFE_MS) {
+    v_cmd = 0;
+    w_cmd = 0;
+    f_cmd = 0;
+    base_cmd = 0;
+    elbow_cmd = 0;
+    wrist_cmd = 0;
+    grip_cmd = 0;
+
+    stopDriveMotors();
+    stopFlippers();
+    resetDrivePIDState();
+  }
+
+  sendTelemetry();
+
+  delay(2);
+}
