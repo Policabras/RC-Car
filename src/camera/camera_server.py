@@ -18,7 +18,23 @@ try:
 except AttributeError:
     client = mqtt.Client()
 
+
+def on_connect(client, userdata, *args, **kwargs):
+    print(f"[MQTT] Conectado al broker {MQTT_BROKER}:{MQTT_PORT}")
+
+
+def on_disconnect(client, userdata, *args, **kwargs):
+    print("[MQTT] Desconectado del broker")
+
+
+try:
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+except Exception:
+    pass
+
 client.connect(MQTT_BROKER, MQTT_PORT, 60)
+client.loop_start()
 
 # ==========================
 # FLASK
@@ -63,6 +79,7 @@ def safe_detect_and_decode(img):
         print(f"[QR] OpenCV detectAndDecode error: {e}")
         return "", None
 
+
 def detect_qr_with_fallbacks(frame):
     # 1) Original frame
     data, points = safe_detect_and_decode(frame)
@@ -101,6 +118,7 @@ def detect_qr_with_fallbacks(frame):
             return data, points / scale
 
     return "", None
+
 
 # ==========================
 # GENERADOR POR CAMARA
@@ -176,40 +194,51 @@ def gen_frames_cam(cam_id):
                     "timestamp": datetime.now().isoformat()
                 }
 
-                client.publish(MQTT_TOPIC, json.dumps(payload))
-                print(f"[CAM {cam_id}] QR detectado:", payload)
+                result = client.publish(MQTT_TOPIC, json.dumps(payload))
+                result.wait_for_publish()
+
+                if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                    print(f"[CAM {cam_id}] QR detectado y enviado a MQTT:", payload)
+                else:
+                    print(
+                        f"[CAM {cam_id}] QR detectado pero FALLÓ envío MQTT. "
+                        f"rc={result.rc} payload={payload}"
+                    )
 
         # Enviar frame
-        ret, buffer = cv2.imencode('.jpg', frame)
+        ret, buffer = cv2.imencode(".jpg", frame)
         if not ret:
             continue
 
         yield (
-            b'--frame\r\n'
-            b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n'
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
         )
+
 
 # ==========================
 # ROUTES VIDEO
 # ==========================
-@app.route('/video_feed/0')
+@app.route("/video_feed/0")
 def video_feed_0():
     return Response(
         gen_frames_cam(0),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
+        mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
-@app.route('/video_feed/1')
+
+@app.route("/video_feed/1")
 def video_feed_1():
     return Response(
         gen_frames_cam(1),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
+        mimetype="multipart/x-mixed-replace; boundary=frame"
     )
+
 
 # ==========================
 # PAGINA PRINCIPAL
 # ==========================
-@app.route('/')
+@app.route("/")
 def index():
     return render_template_string("""
     <html>
@@ -235,8 +264,19 @@ def index():
     </html>
     """)
 
+
 # ==========================
 # MAIN
 # ==========================
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, threaded=True)
+if __name__ == "__main__":
+    try:
+        app.run(host="0.0.0.0", port=5001, threaded=True)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+        for cap in caps:
+            try:
+                cap.release()
+            except Exception:
+                pass
