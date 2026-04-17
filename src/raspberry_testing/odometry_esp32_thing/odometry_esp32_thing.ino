@@ -26,14 +26,19 @@ static const float DRIVE_PWM_SCALE   = 1.00f;
 static const float FLIPPER_PWM_SCALE = 0.80f;
 
 // =====================================================
-// I2C: ESP32 -> TCA9548A -> PCA9685
+// I2C: ESP32 -> TCA9548A -> PCA9685 / AS5600
 // =====================================================
 static const int I2C_SDA = 5;
 static const int I2C_SCL = 18;
 
 static const uint8_t TCA_ADDR    = 0x70;
-static const uint8_t TCA_CHANNEL = 0;
+static const uint8_t TCA_CHANNEL = 0;   // PCA9685
 static const uint8_t PCA_ADDR    = 0x40;
+
+// AS5600 en canales 1 y 2 del TCA
+static const uint8_t AS5600_ADDR  = 0x36;
+static const uint8_t ENC_LEFT_CH  = 1;
+static const uint8_t ENC_RIGHT_CH = 2;
 
 Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(PCA_ADDR);
 
@@ -95,6 +100,57 @@ int grip_cmd  = 0;
 
 unsigned long lastPacketTime = 0;
 const unsigned long FAILSAFE_MS = 300;
+
+// =====================================================
+// PID DE VELOCIDAD + ENCODERS AS5600
+// =====================================================
+const unsigned long DRIVE_CONTROL_PERIOD_MS = 20;
+const int DRIVE_CMD_DEADBAND = 20;
+
+// Ajusta esto a la velocidad máxima real de tu rueda
+// cuando el comando es 1000.
+const float MAX_WHEEL_RPM = 150.0f;
+
+// Si una rueda reporta signo al revés, cambia a true.
+const bool LEFT_ENCODER_INVERTED  = false;
+const bool RIGHT_ENCODER_INVERTED = false;
+
+// Filtro simple para estabilizar RPM medida.
+const float SPEED_FILTER_ALPHA = 0.35f;
+
+// Compensación mínima para vencer fricción estática.
+const int DRIVE_MIN_EFFECTIVE_CMD = 180;
+
+struct PIDController {
+  float kp;
+  float ki;
+  float kd;
+
+  float prevError;
+  float integral;
+
+  float outMin;
+  float outMax;
+};
+
+struct AS5600WheelState {
+  bool initialized;
+  uint16_t raw;
+  float angleDeg;
+  float speedRpm;
+};
+
+// PID más conservador para arrancar sin matar el movimiento
+PIDController pidLeft  = {2.0f, 5.0f, 0.02f, 0.0f, 0.0f, -300.0f, 300.0f};
+PIDController pidRight = {2.0f, 5.0f, 0.02f, 0.0f, 0.0f, -300.0f, 300.0f};
+
+AS5600WheelState encLeft  = {false, 0, 0.0f, 0.0f};
+AS5600WheelState encRight = {false, 0, 0.0f, 0.0f};
+
+float leftTargetRpm  = 0.0f;
+float rightTargetRpm = 0.0f;
+
+unsigned long lastDriveControlMs = 0;
 
 // =====================================================
 // FLIPPER - TELEMETRÍA COMPATIBLE
@@ -226,6 +282,21 @@ int applyInvert(int angle, bool inverted) {
   return inverted ? (180 - angle) : angle;
 }
 
+int applyDriveMinCommand(int cmd) {
+  cmd = clampInt(cmd, -1000, 1000);
+
+  if (cmd == 0) return 0;
+
+  int sign = (cmd > 0) ? 1 : -1;
+  int mag = abs(cmd);
+
+  if (mag < DRIVE_MIN_EFFECTIVE_CMD) {
+    mag = DRIVE_MIN_EFFECTIVE_CMD;
+  }
+
+  return sign * mag;
+}
+
 // =====================================================
 // Motores BTS
 // =====================================================
@@ -250,6 +321,206 @@ void stopDriveMotors() {
   ledcWrite(CH_LPWM_L, 0);
   ledcWrite(CH_RPWM_R, 0);
   ledcWrite(CH_LPWM_R, 0);
+}
+
+// =====================================================
+// AS5600
+// =====================================================
+bool readAS5600Raw(uint8_t tcaChannel, uint16_t &rawAngle) {
+  tcaSelect(tcaChannel);
+
+  Wire.beginTransmission(AS5600_ADDR);
+  Wire.write(0x0C);  // RAW ANGLE HIGH
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  uint8_t n = Wire.requestFrom((int)AS5600_ADDR, 2);
+  if (n != 2) {
+    return false;
+  }
+
+  uint8_t highByte = Wire.read();
+  uint8_t lowByte  = Wire.read();
+
+  rawAngle = (((uint16_t)highByte << 8) | lowByte) & 0x0FFF;
+  return true;
+}
+
+float rawToDegrees(uint16_t raw) {
+  return (raw * 360.0f) / 4096.0f;
+}
+
+bool initWheelEncoder(AS5600WheelState &enc, uint8_t channel) {
+  uint16_t raw;
+  if (!readAS5600Raw(channel, raw)) {
+    return false;
+  }
+
+  enc.raw = raw;
+  enc.angleDeg = rawToDegrees(raw);
+  enc.speedRpm = 0.0f;
+  enc.initialized = true;
+  return true;
+}
+
+bool updateWheelSpeedFromAS5600(
+  AS5600WheelState &enc,
+  uint8_t channel,
+  bool inverted,
+  float dt
+) {
+  if (dt <= 0.0f) return false;
+
+  uint16_t raw;
+  if (!readAS5600Raw(channel, raw)) {
+    return false;
+  }
+
+  float angleDeg = rawToDegrees(raw);
+
+  if (!enc.initialized) {
+    enc.raw = raw;
+    enc.angleDeg = angleDeg;
+    enc.speedRpm = 0.0f;
+    enc.initialized = true;
+    return true;
+  }
+
+  float deltaDeg = angleDeg - enc.angleDeg;
+
+  // Manejo de wrap 0°/360°
+  if (deltaDeg > 180.0f) {
+    deltaDeg -= 360.0f;
+  } else if (deltaDeg < -180.0f) {
+    deltaDeg += 360.0f;
+  }
+
+  if (inverted) {
+    deltaDeg = -deltaDeg;
+  }
+
+  float measuredRpm = (deltaDeg / 360.0f) * (60.0f / dt);
+
+  enc.speedRpm = (SPEED_FILTER_ALPHA * measuredRpm) +
+                 ((1.0f - SPEED_FILTER_ALPHA) * enc.speedRpm);
+
+  enc.raw = raw;
+  enc.angleDeg = angleDeg;
+
+  return true;
+}
+
+// =====================================================
+// PID
+// =====================================================
+void resetPID(PIDController &pid) {
+  pid.prevError = 0.0f;
+  pid.integral = 0.0f;
+}
+
+void resetDrivePIDState() {
+  resetPID(pidLeft);
+  resetPID(pidRight);
+
+  leftTargetRpm  = 0.0f;
+  rightTargetRpm = 0.0f;
+
+  encLeft.speedRpm  = 0.0f;
+  encRight.speedRpm = 0.0f;
+}
+
+float computePID(PIDController &pid, float setpoint, float measurement, float dt) {
+  float error = setpoint - measurement;
+
+  pid.integral += error * dt;
+
+  // Anti-windup simple
+  if (pid.ki > 0.00001f) {
+    float integralLimit = pid.outMax / pid.ki;
+    pid.integral = clampFloat(pid.integral, -integralLimit, integralLimit);
+  }
+
+  float derivative = 0.0f;
+  if (dt > 0.0f) {
+    derivative = (error - pid.prevError) / dt;
+  }
+
+  float output =
+      (pid.kp * error) +
+      (pid.ki * pid.integral) +
+      (pid.kd * derivative);
+
+  output = clampFloat(output, pid.outMin, pid.outMax);
+  pid.prevError = error;
+
+  return output;
+}
+
+void updateDriveControl() {
+  unsigned long now = millis();
+
+  if (lastDriveControlMs == 0) {
+    lastDriveControlMs = now;
+    return;
+  }
+
+  unsigned long elapsedMs = now - lastDriveControlMs;
+  if (elapsedMs < DRIVE_CONTROL_PERIOD_MS) {
+    return;
+  }
+
+  lastDriveControlMs = now;
+  float dt = elapsedMs / 1000.0f;
+
+  // ===============================
+  // Base original que ya funcionaba
+  // ===============================
+  int leftBase  = clampInt(v_cmd - w_cmd, -1000, 1000);
+  int rightBase = clampInt(v_cmd + w_cmd, -1000, 1000);
+
+  if (abs(leftBase) < DRIVE_CMD_DEADBAND)  leftBase = 0;
+  if (abs(rightBase) < DRIVE_CMD_DEADBAND) rightBase = 0;
+
+  // Target de velocidad estimado
+  leftTargetRpm  = (leftBase  / 1000.0f) * MAX_WHEEL_RPM;
+  rightTargetRpm = (rightBase / 1000.0f) * MAX_WHEEL_RPM;
+
+  bool leftOk  = updateWheelSpeedFromAS5600(encLeft, ENC_LEFT_CH, LEFT_ENCODER_INVERTED, dt);
+  bool rightOk = updateWheelSpeedFromAS5600(encRight, ENC_RIGHT_CH, RIGHT_ENCODER_INVERTED, dt);
+
+  // Si falla encoder, vuelve al modo original open-loop
+  if (!leftOk || !rightOk) {
+    setMotorBTS(CH_RPWM_L, CH_LPWM_L, leftBase, DRIVE_PWM_SCALE);
+    setMotorBTS(CH_RPWM_R, CH_LPWM_R, rightBase, DRIVE_PWM_SCALE);
+    return;
+  }
+
+  int leftCorrection = 0;
+  int rightCorrection = 0;
+
+  if (leftBase == 0) {
+    resetPID(pidLeft);
+  } else {
+    leftCorrection = (int)computePID(pidLeft, leftTargetRpm, encLeft.speedRpm, dt);
+  }
+
+  if (rightBase == 0) {
+    resetPID(pidRight);
+  } else {
+    rightCorrection = (int)computePID(pidRight, rightTargetRpm, encRight.speedRpm, dt);
+  }
+
+  // Feedforward + corrección PID
+  int leftOutput  = clampInt(leftBase  + leftCorrection, -1000, 1000);
+  int rightOutput = clampInt(rightBase + rightCorrection, -1000, 1000);
+
+  // Compensación de fricción estática
+  leftOutput  = applyDriveMinCommand(leftOutput);
+  rightOutput = applyDriveMinCommand(rightOutput);
+
+  setMotorBTS(CH_RPWM_L, CH_LPWM_L, leftOutput, DRIVE_PWM_SCALE);
+  setMotorBTS(CH_RPWM_R, CH_LPWM_R, rightOutput, DRIVE_PWM_SCALE);
 }
 
 // =====================================================
@@ -461,6 +732,19 @@ void sendTelemetry() {
   Serial.print(",\"right_mix\":");
   Serial.print(rightMixed);
 
+  Serial.print(",\"left_target_rpm\":");
+  Serial.print(leftTargetRpm, 2);
+  Serial.print(",\"right_target_rpm\":");
+  Serial.print(rightTargetRpm, 2);
+  Serial.print(",\"left_speed_rpm\":");
+  Serial.print(encLeft.speedRpm, 2);
+  Serial.print(",\"right_speed_rpm\":");
+  Serial.print(encRight.speedRpm, 2);
+  Serial.print(",\"left_enc_raw\":");
+  Serial.print(encLeft.raw);
+  Serial.print(",\"right_enc_raw\":");
+  Serial.print(encRight.raw);
+
   Serial.print(",\"link_ok\":");
   Serial.print((millis() - lastPacketTime <= FAILSAFE_MS) ? "true" : "false");
 
@@ -514,6 +798,14 @@ void setupPCA() {
 }
 
 // =====================================================
+// Setup encoders AS5600
+// =====================================================
+void setupAS5600Encoders() {
+  initWheelEncoder(encLeft, ENC_LEFT_CH);
+  initWheelEncoder(encRight, ENC_RIGHT_CH);
+}
+
+// =====================================================
 // Setup
 // =====================================================
 void setup() {
@@ -535,11 +827,14 @@ void setup() {
   pinMode(FLIPPER_LEN, OUTPUT); digitalWrite(FLIPPER_LEN, HIGH);
 
   setupPCA();
+  setupAS5600Encoders();
+  resetDrivePIDState();
 
-  lastPacketTime    = millis();
-  lastFlipperUpdate = millis();
-  lastArmUpdate     = millis();
-  lastTelemetryMs   = 0;
+  lastPacketTime      = millis();
+  lastFlipperUpdate   = millis();
+  lastArmUpdate       = millis();
+  lastTelemetryMs     = 0;
+  lastDriveControlMs  = millis();
 }
 
 // =====================================================
@@ -566,28 +861,26 @@ void loop() {
 
     lastPacketTime = millis();
 
-    int left  = clampInt(v_cmd - w_cmd, -1000, 1000);
-    int right = clampInt(v_cmd + w_cmd, -1000, 1000);
-
-    setMotorBTS(CH_RPWM_L, CH_LPWM_L, left, DRIVE_PWM_SCALE);
-    setMotorBTS(CH_RPWM_R, CH_LPWM_R, right, DRIVE_PWM_SCALE);
-
     writeFlippersMotor(f_cmd);
   }
 
+  updateDriveControl();
   updateFlipperTelemetryEstimate();
   updateArm();
 
   // Failsafe
   if (millis() - lastPacketTime > FAILSAFE_MS) {
-    stopDriveMotors();
-    stopFlippers();
-
+    v_cmd = 0;
+    w_cmd = 0;
     f_cmd = 0;
     base_cmd = 0;
     elbow_cmd = 0;
     wrist_cmd = 0;
     grip_cmd = 0;
+
+    stopDriveMotors();
+    stopFlippers();
+    resetDrivePIDState();
   }
 
   // Telemetría JSON por el mismo Serial
