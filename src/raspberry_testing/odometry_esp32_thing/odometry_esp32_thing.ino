@@ -157,11 +157,6 @@ unsigned long lastDriveControlMs = 0;
 
 // =====================================================
 // FLIPPER - TELEMETRÍA COMPATIBLE
-// Nota:
-// El flipper ahora es motor DC con BTS, no servo.
-// No hay posición real sin encoder.
-// Para no romper tu JSON viejo, mantenemos una
-// "posición virtual" estimada solo para telemetría.
 // =====================================================
 const int FLIPPER_DEADBAND = 60;
 const int FLIPPER_MAX_CMD  = 1000;
@@ -200,12 +195,12 @@ const int ARM_BASE_HOME = 90;
 // Codo
 const int ARM_ELBOW_MIN  = 0;
 const int ARM_ELBOW_MAX  = 180;
-const int ARM_ELBOW_HOME = 90;
+const int ARM_ELBOW_HOME = 0;
 
 // Muñeca
 const int ARM_WRIST_MIN  = 0;
 const int ARM_WRIST_MAX  = 180;
-const int ARM_WRIST_HOME = 90;
+const int ARM_WRIST_HOME = 45;
 
 // Garra
 const int ARM_GRIP_MIN   = 0;
@@ -301,6 +296,26 @@ int applyDriveMinCommand(int cmd) {
 }
 
 // =====================================================
+// HOME DEL BRAZO
+// =====================================================
+void moveArmToHome() {
+  basePos  = ARM_BASE_HOME;
+  elbowPos = ARM_ELBOW_HOME;
+  wristPos = ARM_WRIST_HOME;
+  gripPos  = ARM_GRIP_HOME;
+
+  base_cmd  = 0;
+  elbow_cmd = 0;
+  wrist_cmd = 0;
+  grip_cmd  = 0;
+
+  writeServoPCA(ARM_BASE_CH,  (int)basePos,  ARM_BASE_INVERTED);
+  writeServoPCA(ARM_ELBOW_CH, (int)elbowPos, ARM_ELBOW_INVERTED);
+  writeServoPCA(ARM_WRIST_CH, (int)wristPos, ARM_WRIST_INVERTED);
+  writeServoPCA(ARM_GRIP_CH,  (int)gripPos,  ARM_GRIP_INVERTED);
+}
+
+// =====================================================
 // Motores BTS
 // =====================================================
 void setMotorBTS(int pwmForwardChannel, int pwmBackwardChannel, int value, float scale = 1.0f) {
@@ -333,7 +348,7 @@ bool readAS5600Raw(uint8_t tcaChannel, uint16_t &rawAngle) {
   tcaSelect(tcaChannel);
 
   Wire.beginTransmission(AS5600_ADDR);
-  Wire.write(0x0C);  // RAW ANGLE HIGH
+  Wire.write(0x0C);
   if (Wire.endTransmission(false) != 0) {
     return false;
   }
@@ -392,7 +407,6 @@ bool updateWheelSpeedFromAS5600(
 
   float deltaDeg = angleDeg - enc.angleDeg;
 
-  // Manejo de wrap 0°/360°
   if (deltaDeg > 180.0f) {
     deltaDeg -= 360.0f;
   } else if (deltaDeg < -180.0f) {
@@ -438,7 +452,6 @@ float computePID(PIDController &pid, float setpoint, float measurement, float dt
 
   pid.integral += error * dt;
 
-  // Anti-windup simple
   if (pid.ki > 0.00001f) {
     float integralLimit = pid.outMax / pid.ki;
     pid.integral = clampFloat(pid.integral, -integralLimit, integralLimit);
@@ -476,23 +489,18 @@ void updateDriveControl() {
   lastDriveControlMs = now;
   float dt = elapsedMs / 1000.0f;
 
-  // ===============================
-  // Base original que ya funcionaba
-  // ===============================
   int leftBase  = clampInt(v_cmd - w_cmd, -1000, 1000);
   int rightBase = clampInt(v_cmd + w_cmd, -1000, 1000);
 
   if (abs(leftBase) < DRIVE_CMD_DEADBAND)  leftBase = 0;
   if (abs(rightBase) < DRIVE_CMD_DEADBAND) rightBase = 0;
 
-  // Target de velocidad estimado
   leftTargetRpm  = (leftBase  / 1000.0f) * MAX_WHEEL_RPM;
   rightTargetRpm = (rightBase / 1000.0f) * MAX_WHEEL_RPM;
 
   leftOk  = updateWheelSpeedFromAS5600(encLeft, ENC_LEFT_CH, LEFT_ENCODER_INVERTED, dt);
   rightOk = updateWheelSpeedFromAS5600(encRight, ENC_RIGHT_CH, RIGHT_ENCODER_INVERTED, dt);
 
-  // Si falla encoder, vuelve al modo original open-loop
   if (!leftOk || !rightOk) {
     setMotorBTS(CH_RPWM_L, CH_LPWM_L, leftBase, DRIVE_PWM_SCALE);
     setMotorBTS(CH_RPWM_R, CH_LPWM_R, rightBase, DRIVE_PWM_SCALE);
@@ -514,11 +522,9 @@ void updateDriveControl() {
     rightCorrection = (int)computePID(pidRight, rightTargetRpm, encRight.speedRpm, dt);
   }
 
-  // Feedforward + corrección PID
   int leftOutput  = clampInt(leftBase  + leftCorrection, -1000, 1000);
   int rightOutput = clampInt(rightBase + rightCorrection, -1000, 1000);
 
-  // Compensación de fricción estática
   leftOutput  = applyDriveMinCommand(leftOutput);
   rightOutput = applyDriveMinCommand(rightOutput);
 
@@ -548,6 +554,7 @@ void writeFlippersMotor(int cmd) {
     ledcWrite(CH_FLIPPER_LPWM, 0);
   }
 }
+
 void stopFlippers() {
   ledcWrite(CH_FLIPPER_RPWM, 0);
   ledcWrite(CH_FLIPPER_LPWM, 0);
@@ -555,7 +562,6 @@ void stopFlippers() {
 
 // =====================================================
 // Estimación virtual de posición de flipper
-// SOLO para mantener compatibilidad en telemetría
 // =====================================================
 void updateFlipperTelemetryEstimate() {
   unsigned long now = millis();
@@ -631,7 +637,6 @@ void updateArm() {
 // =====================================================
 // Parsear paquetes tipo
 // <v,w,f,base,elbow,wrist,grip>
-// leyendo desde Serial
 // =====================================================
 bool readPacket(int &v, int &w, int &f, int &base, int &elbow, int &wrist, int &grip) {
   static String buffer = "";
@@ -677,7 +682,6 @@ bool readPacket(int &v, int &w, int &f, int &base, int &elbow, int &wrist, int &
 
 // =====================================================
 // Telemetría JSON por Serial
-// Formato compatible con el código viejo
 // =====================================================
 void sendTelemetry() {
   unsigned long now = millis();
@@ -716,7 +720,6 @@ void sendTelemetry() {
   Serial.print(",\"grip_cmd\":");
   Serial.print(grip_cmd);
 
-  // Compatibilidad con el JSON viejo
   Serial.print(",\"flipper_pos\":");
   Serial.print((int)flipperPos);
 
@@ -747,151 +750,4 @@ void sendTelemetry() {
   Serial.print(encLeft.speedRpm, 2);
   Serial.print(",\"right_speed_rpm\":");
   Serial.print(encRight.speedRpm, 2);
-  Serial.print(",\"left_enc_raw\":");
-  Serial.print(encLeft.raw);
-  Serial.print(",\"right_enc_raw\":");
-  Serial.print(encRight.raw);
-
-  Serial.print(",\"link_ok\":");
-  Serial.print((millis() - lastPacketTime <= FAILSAFE_MS) ? "true" : "false");
-
-  Serial.println("}}");
-}
-
-// =====================================================
-// Setup PWM motores
-// =====================================================
-void setupPWM() {
-  // Tracción
-  ledcSetup(CH_RPWM_L, PWM_FREQ, PWM_RES);
-  ledcSetup(CH_LPWM_L, PWM_FREQ, PWM_RES);
-  ledcSetup(CH_RPWM_R, PWM_FREQ, PWM_RES);
-  ledcSetup(CH_LPWM_R, PWM_FREQ, PWM_RES);
-
-  ledcAttachPin(RPWM_L, CH_RPWM_L);
-  ledcAttachPin(LPWM_L, CH_LPWM_L);
-  ledcAttachPin(RPWM_R, CH_RPWM_R);
-  ledcAttachPin(LPWM_R, CH_LPWM_R);
-
-  // Flippers
-  ledcSetup(CH_FLIPPER_RPWM, PWM_FREQ, PWM_RES);
-  ledcSetup(CH_FLIPPER_LPWM, PWM_FREQ, PWM_RES);
-
-  ledcAttachPin(FLIPPER_RPWM, CH_FLIPPER_RPWM);
-  ledcAttachPin(FLIPPER_LPWM, CH_FLIPPER_LPWM);
-}
-
-// =====================================================
-// Setup PCA9685
-// =====================================================
-void setupPCA() {
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire.setClock(100000);
-
-  tcaSelect(TCA_CHANNEL);
-  pca.begin();
-  pca.setOscillatorFrequency(27000000);
-  pca.setPWMFreq(PCA_SERVO_FREQ);
-
-  delay(50);
-
-  flipperPos = FLIPPER_HOME;
-  basePos    = ARM_BASE_HOME;
-  elbowPos   = ARM_ELBOW_HOME;
-  wristPos   = ARM_WRIST_HOME;
-  gripPos    = ARM_GRIP_HOME;
-
-  writeArm();
-}
-
-// =====================================================
-// Setup encoders AS5600
-// =====================================================
-void setupAS5600Encoders() {
-  initWheelEncoder(encLeft, ENC_LEFT_CH);
-  initWheelEncoder(encRight, ENC_RIGHT_CH);
-}
-
-// =====================================================
-// Setup
-// =====================================================
-void setup() {
-  Serial.begin(SERIAL_BAUD);
-  delay(300);
-
-  setupPWM();
-  stopDriveMotors();
-  stopFlippers();
-
-  // Enables BTS7960 tracción
-  pinMode(REN_L, OUTPUT); digitalWrite(REN_L, HIGH);
-  pinMode(LEN_L, OUTPUT); digitalWrite(LEN_L, HIGH);
-  pinMode(REN_R, OUTPUT); digitalWrite(REN_R, HIGH);
-  pinMode(LEN_R, OUTPUT); digitalWrite(LEN_R, HIGH);
-
-  // Enables BTS7960 flippers
-  pinMode(FLIPPER_REN, OUTPUT); digitalWrite(FLIPPER_REN, HIGH);
-  pinMode(FLIPPER_LEN, OUTPUT); digitalWrite(FLIPPER_LEN, HIGH);
-
-  setupPCA();
-  setupAS5600Encoders();
-  resetDrivePIDState();
-
-  lastPacketTime      = millis();
-  lastFlipperUpdate   = millis();
-  lastArmUpdate       = millis();
-  lastTelemetryMs     = 0;
-  lastDriveControlMs  = millis();
-}
-
-// =====================================================
-// Loop
-// =====================================================
-void loop() {
-  int newV, newW, newF, newBase, newElbow, newWrist, newGrip;
-
-  if (readPacket(newV, newW, newF, newBase, newElbow, newWrist, newGrip)) {
-    if (USE_CROSSED_DRIVE_MAPPING) {
-      v_cmd = clampInt(-newW, -1000, 1000);
-      w_cmd = clampInt(newV, -1000, 1000);
-    } else {
-      v_cmd = clampInt(newV, -1000, 1000);
-      w_cmd = clampInt(newW, -1000, 1000);
-    }
-
-    f_cmd = clampInt(newF, -1000, 1000);
-
-    base_cmd  = clampInt(newBase, -1000, 1000);
-    elbow_cmd = clampInt(newElbow, -1000, 1000);
-    wrist_cmd = clampInt(newWrist, -1000, 1000);
-    grip_cmd  = clampInt(newGrip, -1000, 1000);
-
-    lastPacketTime = millis();
-
-    writeFlippersMotor(f_cmd);
-  }
-
-  updateDriveControl();
-  updateFlipperTelemetryEstimate();
-  updateArm();
-
-  // Failsafe
-  if (millis() - lastPacketTime > FAILSAFE_MS) {
-    v_cmd = 0;
-    w_cmd = 0;
-    f_cmd = 0;
-    base_cmd = 0;
-    elbow_cmd = 0;
-    wrist_cmd = 0;
-    grip_cmd = 0;
-
-    stopDriveMotors();
-    stopFlippers();
-    resetDrivePIDState();
-  }
-
-  // Telemetría JSON por el mismo Serial
-  sendTelemetry();
-
-  delay(2);
-}
+  Serial.print
