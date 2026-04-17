@@ -186,12 +186,17 @@ def gen_frames_cam(cam_id):
                         "y": int(p[1] * scale_y)
                     })
 
+                # Dimensiones reales del frame
+                frame_height, frame_width = frame.shape[:2]
+
                 # Payload MQTT
                 payload = {
                     "qr": data,
                     "camera": cam_id,
                     "points": pts_scaled,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "frame_width": int(frame_width),
+                    "frame_height": int(frame_height)
                 }
 
                 result = client.publish(MQTT_TOPIC, json.dumps(payload))

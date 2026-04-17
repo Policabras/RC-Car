@@ -72,6 +72,8 @@ type QrPayload = {
   camera: number;
   points: { x: number; y: number }[];
   timestamp: string;
+  frame_width: number;
+  frame_height: number;
 };
 
 type QrData = {
@@ -266,7 +268,7 @@ function App() {
             <p className="eyebrow">Robot Control Station</p>
             <h1>Dashboard de monitoreo</h1>
             <p className="subtitle">
-              Frontend distribuido para system, status, actuators y cmd.
+              Frontend distribuido para system, status, actuators, cmd y qr.
             </p>
           </div>
 
@@ -376,6 +378,7 @@ function App() {
                 heightClassName="camera-stage-large"
                 onLoad={() => setFrontCameraLive(true)}
                 onError={() => setFrontCameraLive(false)}
+                qrOverlay={qrData?.payload?.camera === 0 ? qrData.payload : null}
               />
             </Panel>
 
@@ -394,6 +397,7 @@ function App() {
                 heightClassName="camera-stage-medium"
                 onLoad={() => setRearCameraLive(true)}
                 onError={() => setRearCameraLive(false)}
+                qrOverlay={qrData?.payload?.camera === 1 ? qrData.payload : null}
               />
             </Panel>
           </section>
@@ -561,6 +565,7 @@ function CameraFeed({
   heightClassName,
   onLoad,
   onError,
+  qrOverlay,
 }: {
   src: string;
   statusText: string;
@@ -568,23 +573,116 @@ function CameraFeed({
   heightClassName: string;
   onLoad: () => void;
   onError: () => void;
+  qrOverlay: QrPayload | null;
 }) {
   const hasSrc = Boolean(src);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const updateSize = () => {
+      if (!stageRef.current) {
+        return;
+      }
+
+      const rect = stageRef.current.getBoundingClientRect();
+      setStageSize({
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateSize();
+    });
+
+    if (stageRef.current) {
+      resizeObserver.observe(stageRef.current);
+    }
+
+    window.addEventListener("resize", updateSize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
+  const overlay = useMemo(() => {
+    if (
+      !qrOverlay ||
+      !qrOverlay.points ||
+      qrOverlay.points.length < 4 ||
+      !qrOverlay.frame_width ||
+      !qrOverlay.frame_height ||
+      !stageSize.width ||
+      !stageSize.height
+    ) {
+      return null;
+    }
+
+    const sourceW = qrOverlay.frame_width;
+    const sourceH = qrOverlay.frame_height;
+    const containerW = stageSize.width;
+    const containerH = stageSize.height;
+
+    const scale = Math.min(containerW / sourceW, containerH / sourceH);
+    const offsetX = (containerW - sourceW * scale) / 2;
+    const offsetY = (containerH - sourceH * scale) / 2;
+
+    const mappedPoints = qrOverlay.points.map((p) => ({
+      x: offsetX + p.x * scale,
+      y: offsetY + p.y * scale,
+    }));
+
+    const polygonPoints = mappedPoints.map((p) => `${p.x},${p.y}`).join(" ");
+    const firstPoint = mappedPoints[0];
+
+    return {
+      polygonPoints,
+      labelX: firstPoint.x,
+      labelY: firstPoint.y > 18 ? firstPoint.y - 8 : firstPoint.y + 18,
+    };
+  }, [qrOverlay, stageSize]);
 
   return (
-    <div className={`camera-stage ${heightClassName}`}>
+    <div ref={stageRef} className={`camera-stage ${heightClassName}`}>
       <div className="camera-overlay-grid"></div>
 
       <div className="camera-status-badge">{statusText}</div>
 
       {hasSrc ? (
-        <img
-          className="camera-stream"
-          src={src}
-          alt="Transmisión MJPEG"
-          onLoad={onLoad}
-          onError={onError}
-        />
+        <>
+          <img
+            className="camera-stream"
+            src={src}
+            alt="Transmisión MJPEG"
+            onLoad={onLoad}
+            onError={onError}
+          />
+
+          {overlay ? (
+            <svg
+              className="camera-qr-overlay"
+              viewBox={`0 0 ${stageSize.width} ${stageSize.height}`}
+              preserveAspectRatio="none"
+            >
+              <polygon
+                className="camera-qr-polygon"
+                points={overlay.polygonPoints}
+              />
+              <text
+                className="camera-qr-label"
+                x={overlay.labelX}
+                y={overlay.labelY}
+              >
+                {qrOverlay?.qr}
+              </text>
+            </svg>
+          ) : null}
+        </>
       ) : (
         <div className="camera-placeholder">
           <div className="camera-placeholder-title">Vista de cámara</div>
