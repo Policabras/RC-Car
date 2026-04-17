@@ -557,13 +557,29 @@ def wait_for_controller() -> pygame.joystick.Joystick | None:
 # =========================================================
 # LOGICA DE MOVIMIENTO
 # =========================================================
-def compute_drive(lx: float, l2: float, r2: float, inverted_drive: bool = False) -> tuple[int, int]:
+def compute_drive(
+    lx: float,
+    l2: float,
+    r2: float,
+    inverted_drive: bool = False,
+) -> tuple[int, int]:
+    """
+    Modo normal:
+      - R2 = adelante
+      - L2 = reversa
+      - LX = giro normal
+
+    Modo invertido:
+      - se invierte v
+      - se invierte w
+    """
     v = int((r2 - l2) * V_MAX)
+    w = int(lx * W_MAX)
 
     if inverted_drive:
         v = -v
+        w = -w
 
-    w = int(lx * W_MAX)
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
 
@@ -674,7 +690,9 @@ def main() -> None:
         PRINT_INTERVAL,
     )
     logger.info(
-        "[MAP] LX->w | L2/R2->v | HAT_Y->f | RX->base | RY->elbow | Y/A->wrist | X/B->grip"
+        "[MAP] NORMAL: R2->adelante | L2->reversa | LX->w | "
+        "BTN_DRIVE_MODE_TOGGLE invierte v y w | "
+        "HAT_Y->f | RX->base | RY->elbow | Y/A->wrist | X/B->grip"
     )
 
     log_snapshot(level=logging.INFO, reason="program_start")
@@ -740,8 +758,8 @@ def main() -> None:
                         elif event.button == BTN_DRIVE_MODE_TOGGLE:
                             drive_mode_inverted = not drive_mode_inverted
                             logger.info(
-                                "[DRIVE] Modo de tracción cambiado a: %s",
-                                "INVERTIDO" if drive_mode_inverted else "NORMAL",
+                                "[DRIVE] Modo de manejo cambiado a: %s",
+                                "INVERTIDO (v y w invertidos)" if drive_mode_inverted else "NORMAL",
                             )
 
                     elif event.type == pygame.JOYBUTTONUP:
