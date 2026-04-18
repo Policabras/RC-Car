@@ -624,13 +624,10 @@ def compute_elbow(ry: float) -> int:
     return clamp(int(ry * ELBOW_MAX), -1000, 1000)
 
 
-def compute_wrist(up_pressed: bool, down_pressed: bool) -> int:
-    if up_pressed and not down_pressed:
-        return -WRIST_MAX
-    if down_pressed and not up_pressed:
-        return WRIST_MAX
-    return 0
-
+def compute_wrist(ly: float) -> int:
+    if INVERT_LY:
+        ly = ly
+    return clamp(int(ly * WRIST_MAX), -1000, 1000)
 
 def compute_grip(open_pressed: bool, close_pressed: bool) -> int:
     if open_pressed and not close_pressed:
@@ -851,7 +848,7 @@ def main() -> None:
                     f=compute_flipper_from_hat(hat_y),
                     base=0 if home_active else compute_base(rx),
                     elbow=0 if home_active else compute_elbow(ry),
-                    wrist=0 if home_active else compute_wrist(wrist_up, wrist_down),
+                    wrist=0 if home_active else compute_wrist(ly),
                     grip=0 if home_active else compute_grip(grip_open, grip_close),
                     home=1 if home_active else 0,
                 )
