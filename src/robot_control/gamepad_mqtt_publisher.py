@@ -603,14 +603,14 @@ def compute_drive(
 
     if inverted_drive:
         v = -v
-        w = -w
+        w = w
 
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
 
 def compute_flipper_from_hat(hat_y: int) -> int:
     if INVERT_HAT_Y:
-        hat_y = -hat_y
+        hat_y = hat_y
     return clamp(int(hat_y * F_MAX), -1000, 1000)
 
 
@@ -626,9 +626,9 @@ def compute_elbow(ry: float) -> int:
 
 def compute_wrist(up_pressed: bool, down_pressed: bool) -> int:
     if up_pressed and not down_pressed:
-        return WRIST_MAX
-    if down_pressed and not up_pressed:
         return -WRIST_MAX
+    if down_pressed and not up_pressed:
+        return WRIST_MAX
     return 0
 
 
