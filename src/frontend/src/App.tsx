@@ -67,14 +67,30 @@ type CommandPayload = {
   [key: string]: unknown;
 };
 
+type QrPayload = {
+  qr: string;
+  camera: number;
+  points: { x: number; y: number }[];
+  timestamp: string;
+  frame_width: number;
+  frame_height: number;
+};
+
+type QrData = {
+  topic: string;
+  subStream: string | null;
+  payload: QrPayload;
+};
+
 type InitialTelemetry = {
   system: SystemPayload | null;
   status: StatusData | null;
   actuators: ActuatorsData | null;
   cmd: unknown;
+  qr: QrData | null;
 };
 
-const BACKEND_URL = "http://localhost:3000";
+const BACKEND_URL = "http://192.168.3.4:3000";
 const FRONT_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/0";
 const REAR_CAMERA_URL = "http://192.168.3.16:8081/mjpeg/1";
 
@@ -89,6 +105,8 @@ function App() {
   const [statusData, setStatusData] = useState<StatusData | null>(null);
   const [actuatorsData, setActuatorsData] = useState<ActuatorsData | null>(null);
   const [cmdData, setCmdData] = useState<CommandPayload | null>(null);
+  const [qrData, setQrData] = useState<QrData | null>(null);
+  const [visibleQrOverlay, setVisibleQrOverlay] = useState<QrPayload | null>(null);
 
   const [lastTelemetryAt, setLastTelemetryAt] = useState<number | null>(null);
   const [lastUpdateSeconds, setLastUpdateSeconds] = useState(0);
@@ -127,6 +145,7 @@ function App() {
       setStatusData(data.status);
       setActuatorsData(data.actuators);
       setCmdData(normalizeCmdData(data.cmd));
+      setQrData(data.qr);
       markTelemetry();
     });
 
@@ -150,10 +169,41 @@ function App() {
       markTelemetry();
     });
 
+    socket.on("qrData", (data: QrData) => {
+      setQrData(data);
+      markTelemetry();
+    });
+
     return () => {
       socket.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    if (!qrData?.payload) {
+      return;
+    }
+
+    setVisibleQrOverlay(qrData.payload);
+
+    const timeoutId = window.setTimeout(() => {
+      setVisibleQrOverlay((current) => {
+        if (
+          current?.timestamp === qrData.payload.timestamp &&
+          current?.camera === qrData.payload.camera &&
+          current?.qr === qrData.payload.qr
+        ) {
+          return null;
+        }
+
+        return current;
+      });
+    }, 3000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [qrData]);
 
   const system = systemData?.payload;
   const actuators = actuatorsData?.payload;
@@ -245,7 +295,7 @@ function App() {
             <p className="eyebrow">Robot Control Station</p>
             <h1>Dashboard de monitoreo</h1>
             <p className="subtitle">
-              Frontend distribuido para system, status, actuators y cmd.
+              Frontend distribuido para system, status, actuators, cmd y qr.
             </p>
           </div>
 
@@ -281,28 +331,50 @@ function App() {
         <main className="workspace-grid">
           <section className="column-stack">
             <Panel
-              title="Trayectoria"
-              subtitle="Odometría pendiente de integrar"
-              tag="Track"
+              title="Receptor QR"
+              subtitle="Último QR recibido desde MQTT"
+              tag="QR"
               bodyClassName="panel-no-padding"
             >
               <div className="trajectory-stage">
                 <div className="trajectory-grid"></div>
                 <div className="trajectory-center">
-                  <div className="trajectory-badge">Placeholder</div>
-                  <div className="trajectory-title">
-                    Odometría aún no integrada
+                  <div className="trajectory-badge">
+                    {qrData?.payload?.camera !== undefined
+                      ? `Cámara ${qrData.payload.camera}`
+                      : "Sin detección"}
                   </div>
+
+                  <div className="trajectory-title">
+                    {qrData?.payload?.qr ?? "Esperando lectura de QR"}
+                  </div>
+
                   <div className="trajectory-text">
-                    Aquí se mostrará la trayectoria real cuando el módulo esté listo.
+                    {qrData?.payload?.timestamp
+                      ? `Timestamp: ${qrData.payload.timestamp}`
+                      : "Aún no se ha recibido ningún código QR desde el backend."}
                   </div>
                 </div>
               </div>
 
               <div className="mini-metric-row">
-                <MiniMetric label="Pos X" value="--" />
-                <MiniMetric label="Pos Y" value="--" />
-                <MiniMetric label="Ángulo theta" value="--" />
+                <MiniMetric label="QR" value={qrData?.payload?.qr ?? "--"} />
+                <MiniMetric
+                  label="Cámara"
+                  value={
+                    qrData?.payload?.camera !== undefined
+                      ? String(qrData.payload.camera)
+                      : "--"
+                  }
+                />
+                <MiniMetric
+                  label="Puntos"
+                  value={
+                    qrData?.payload?.points
+                      ? String(qrData.payload.points.length)
+                      : "--"
+                  }
+                />
               </div>
             </Panel>
 
@@ -333,6 +405,7 @@ function App() {
                 heightClassName="camera-stage-large"
                 onLoad={() => setFrontCameraLive(true)}
                 onError={() => setFrontCameraLive(false)}
+                qrOverlay={visibleQrOverlay?.camera === 0 ? visibleQrOverlay : null}
               />
             </Panel>
 
@@ -351,6 +424,7 @@ function App() {
                 heightClassName="camera-stage-medium"
                 onLoad={() => setRearCameraLive(true)}
                 onError={() => setRearCameraLive(false)}
+                qrOverlay={visibleQrOverlay?.camera === 1 ? visibleQrOverlay : null}
               />
             </Panel>
           </section>
@@ -518,6 +592,7 @@ function CameraFeed({
   heightClassName,
   onLoad,
   onError,
+  qrOverlay,
 }: {
   src: string;
   statusText: string;
@@ -525,23 +600,116 @@ function CameraFeed({
   heightClassName: string;
   onLoad: () => void;
   onError: () => void;
+  qrOverlay: QrPayload | null;
 }) {
   const hasSrc = Boolean(src);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const updateSize = () => {
+      if (!stageRef.current) {
+        return;
+      }
+
+      const rect = stageRef.current.getBoundingClientRect();
+      setStageSize({
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateSize();
+    });
+
+    if (stageRef.current) {
+      resizeObserver.observe(stageRef.current);
+    }
+
+    window.addEventListener("resize", updateSize);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
+  const overlay = useMemo(() => {
+    if (
+      !qrOverlay ||
+      !qrOverlay.points ||
+      qrOverlay.points.length < 4 ||
+      !qrOverlay.frame_width ||
+      !qrOverlay.frame_height ||
+      !stageSize.width ||
+      !stageSize.height
+    ) {
+      return null;
+    }
+
+    const sourceW = qrOverlay.frame_width;
+    const sourceH = qrOverlay.frame_height;
+    const containerW = stageSize.width;
+    const containerH = stageSize.height;
+
+    const scale = Math.min(containerW / sourceW, containerH / sourceH);
+    const offsetX = (containerW - sourceW * scale) / 2;
+    const offsetY = (containerH - sourceH * scale) / 2;
+
+    const mappedPoints = qrOverlay.points.map((p) => ({
+      x: offsetX + p.x * scale,
+      y: offsetY + p.y * scale,
+    }));
+
+    const polygonPoints = mappedPoints.map((p) => `${p.x},${p.y}`).join(" ");
+    const firstPoint = mappedPoints[0];
+
+    return {
+      polygonPoints,
+      labelX: firstPoint.x,
+      labelY: firstPoint.y > 18 ? firstPoint.y - 8 : firstPoint.y + 18,
+    };
+  }, [qrOverlay, stageSize]);
 
   return (
-    <div className={`camera-stage ${heightClassName}`}>
+    <div ref={stageRef} className={`camera-stage ${heightClassName}`}>
       <div className="camera-overlay-grid"></div>
 
       <div className="camera-status-badge">{statusText}</div>
 
       {hasSrc ? (
-        <img
-          className="camera-stream"
-          src={src}
-          alt="Transmisión MJPEG"
-          onLoad={onLoad}
-          onError={onError}
-        />
+        <>
+          <img
+            className="camera-stream"
+            src={src}
+            alt="Transmisión MJPEG"
+            onLoad={onLoad}
+            onError={onError}
+          />
+
+          {overlay ? (
+            <svg
+              className="camera-qr-overlay"
+              viewBox={`0 0 ${stageSize.width} ${stageSize.height}`}
+              preserveAspectRatio="none"
+            >
+              <polygon
+                className="camera-qr-polygon"
+                points={overlay.polygonPoints}
+              />
+              <text
+                className="camera-qr-label"
+                x={overlay.labelX}
+                y={overlay.labelY}
+              >
+                {qrOverlay?.qr}
+              </text>
+            </svg>
+          ) : null}
+        </>
       ) : (
         <div className="camera-placeholder">
           <div className="camera-placeholder-title">Vista de cámara</div>

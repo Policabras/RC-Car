@@ -10,7 +10,7 @@ app.use(express.json());
 
 const server = http.createServer(app);
 
-const FRONTEND_URL = "http://localhost:5173";
+const FRONTEND_URL = "http://192.168.3.4:5173";
 const PORT = 3000;
 const MQTT_URL = "mqtt://192.168.3.4:1883";
 const DEVICE_ID = "pi_robot_01";
@@ -31,6 +31,7 @@ const latestTelemetry = {
   status: null,
   actuators: null,
   cmd: null,
+  qr: null,
 };
 
 // ==========================
@@ -48,6 +49,7 @@ mqttClient.on("connect", () => {
     `telemetry/${DEVICE_ID}/status`,
     `telemetry/${DEVICE_ID}/actuators`,
     `telemetry/${DEVICE_ID}/cmd/#`,
+    "robot/qr",
   ];
 
   mqttClient.subscribe(topics, (err) => {
@@ -78,6 +80,13 @@ mqttClient.on("offline", () => {
 // Utilidad para detectar stream
 // ==========================
 function getStreamFromTopic(topic) {
+  if (topic === "robot/qr") {
+    return {
+      mainStream: "qr",
+      subStream: null,
+    };
+  }
+
   const parts = topic.split("/");
 
   // Esperado:
@@ -172,6 +181,33 @@ mqttClient.on("message", (topic, messageBuffer) => {
         io.emit("telemetryData", {
           topic,
           stream: "cmd",
+          subStream,
+          data: parsed,
+        });
+        break;
+
+      case "qr":
+        latestTelemetry.qr = {
+          topic,
+          subStream,
+          payload: parsed,
+        };
+
+        console.log("QR recibido:", {
+          topic,
+          subStream,
+          payload: parsed,
+        });
+
+        io.emit("qrData", {
+          topic,
+          subStream,
+          payload: parsed,
+        });
+
+        io.emit("telemetryData", {
+          topic,
+          stream: "qr",
           subStream,
           data: parsed,
         });

@@ -74,6 +74,23 @@ ELBOW_MAX = int(os.getenv("ELBOW_MAX", "1000"))
 WRIST_MAX = int(os.getenv("WRIST_MAX", "1000"))
 GRIP_MAX = int(os.getenv("GRIP_MAX", "1000"))
 
+# =========================================================
+# HOME DEL BRAZO
+# Alineado con tu .ino:
+#   ARM_BASE_HOME  = 90
+#   ARM_ELBOW_HOME = 0
+#   ARM_WRIST_HOME = 45
+#   ARM_GRIP_HOME  = 90
+# =========================================================
+ARM_HOME_BASE = int(os.getenv("ARM_HOME_BASE", "90"))
+ARM_HOME_ELBOW = int(os.getenv("ARM_HOME_ELBOW", "0"))
+ARM_HOME_WRIST = int(os.getenv("ARM_HOME_WRIST", "45"))
+ARM_HOME_GRIP = int(os.getenv("ARM_HOME_GRIP", "90"))
+
+# Cantidad de publicaciones consecutivas con home=1
+# para hacer más robusto el disparo del botón.
+HOME_PULSE_PUBLISHES = int(os.getenv("HOME_PULSE_PUBLISHES", "3"))
+
 INVERT_LY = os.getenv("INVERT_LY", "true").strip().lower() in {"1", "true", "yes", "on"}
 INVERT_RY = os.getenv("INVERT_RY", "true").strip().lower() in {"1", "true", "yes", "on"}
 INVERT_HAT_Y = os.getenv("INVERT_HAT_Y", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -84,15 +101,19 @@ SHUTDOWN_HOLD = float(os.getenv("SHUTDOWN_HOLD", "5.0"))
 
 # Axis mapping
 AXIS_LEFT_X = int(os.getenv("AXIS_LEFT_X", "0"))
-AXIS_LEFT_Y = int(os.getenv("AXIS_LEFT_Y", "1"))   # Reservado / no usado en la lógica actual
+AXIS_LEFT_Y = int(os.getenv("AXIS_LEFT_Y", "1"))
 AXIS_RIGHT_X = int(os.getenv("AXIS_RIGHT_X", "2"))
 AXIS_RIGHT_Y = int(os.getenv("AXIS_RIGHT_Y", "3"))
 AXIS_L2 = int(os.getenv("AXIS_L2", "4"))
 AXIS_R2 = int(os.getenv("AXIS_R2", "5"))
 
 # Button mapping
-BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "9"))
+BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "7"))
 BTN_DRIVE_MODE_TOGGLE = int(os.getenv("BTN_DRIVE_MODE_TOGGLE", "8"))
+
+# Botón HOME del brazo
+# Default sugerido: 4 (LB). Cámbialo en .env si tu control usa otro índice.
+BTN_ARM_HOME = int(os.getenv("BTN_ARM_HOME", "4"))
 
 # Mapeo típico estilo Xbox:
 # A=0, B=1, X=2, Y=3
@@ -138,6 +159,7 @@ class CommandState:
     elbow: int = 0
     wrist: int = 0
     grip: int = 0
+    home: int = 0
 
     def as_payload(self) -> dict[str, int]:
         return {
@@ -148,7 +170,20 @@ class CommandState:
             "elbow": self.elbow,
             "wrist": self.wrist,
             "grip": self.grip,
+            "home": self.home,
         }
+
+
+# =========================================================
+# HELPERS HOME
+# =========================================================
+def get_arm_home_positions() -> dict[str, int]:
+    return {
+        "base": ARM_HOME_BASE,
+        "elbow": ARM_HOME_ELBOW,
+        "wrist": ARM_HOME_WRIST,
+        "grip": ARM_HOME_GRIP,
+    }
 
 
 # =========================================================
@@ -179,8 +214,8 @@ def get_memory_mb() -> float:
     try:
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         if sys.platform == "darwin":
-            return round(usage / (1024 * 1024), 2)  # bytes -> MB
-        return round(usage / 1024, 2)  # KB -> MB en Linux
+            return round(usage / (1024 * 1024), 2)
+        return round(usage / 1024, 2)
     except Exception:
         return -1.0
 
@@ -563,16 +598,6 @@ def compute_drive(
     r2: float,
     inverted_drive: bool = False,
 ) -> tuple[int, int]:
-    """
-    Modo normal:
-      - R2 = adelante
-      - L2 = reversa
-      - LX = giro normal
-
-    Modo invertido:
-      - se invierte v
-      - se invierte w
-    """
     v = int((r2 - l2) * V_MAX)
     w = int(lx * W_MAX)
 
@@ -690,12 +715,27 @@ def main() -> None:
         PRINT_INTERVAL,
     )
     logger.info(
+        "[ARM] HOME base=%s elbow=%s wrist=%s grip=%s",
+        ARM_HOME_BASE,
+        ARM_HOME_ELBOW,
+        ARM_HOME_WRIST,
+        ARM_HOME_GRIP,
+    )
+    logger.info(
         "[MAP] NORMAL: R2->adelante | L2->reversa | LX->w | "
-        "BTN_DRIVE_MODE_TOGGLE invierte v y w | "
-        "HAT_Y->f | RX->base | RY->elbow | Y/A->wrist | X/B->grip"
+        "BTN_DRIVE_MODE_TOGGLE invierte v | "
+        "HAT_Y->f | RX->base | RY->elbow | Y/A->wrist | X/B->grip | "
+        "BTN_ARM_HOME->home"
     )
 
-    log_snapshot(level=logging.INFO, reason="program_start")
+    log_snapshot(
+        level=logging.INFO,
+        reason="program_start",
+        extra={
+            "arm_home": get_arm_home_positions(),
+            "btn_arm_home": BTN_ARM_HOME,
+        },
+    )
 
     init_pygame()
     client = connect_mqtt_forever()
@@ -718,6 +758,10 @@ def main() -> None:
         shutdown_triggered = False
         rumble_on = False
         drive_mode_inverted = False
+
+        # HOME: pulso corto y robusto
+        home_pulse_remaining = 0
+
         cmd = CommandState()
 
         try:
@@ -759,7 +803,15 @@ def main() -> None:
                             drive_mode_inverted = not drive_mode_inverted
                             logger.info(
                                 "[DRIVE] Modo de manejo cambiado a: %s",
-                                "INVERTIDO (v y w invertidos)" if drive_mode_inverted else "NORMAL",
+                                "INVERTIDO" if drive_mode_inverted else "NORMAL",
+                            )
+
+                        elif event.button == BTN_ARM_HOME:
+                            home_pulse_remaining = HOME_PULSE_PUBLISHES
+                            logger.info(
+                                "[ARM] HOME solicitado desde botón=%s pulsos=%s",
+                                BTN_ARM_HOME,
+                                HOME_PULSE_PUBLISHES,
                             )
 
                     elif event.type == pygame.JOYBUTTONUP:
@@ -772,9 +824,8 @@ def main() -> None:
                                 stop_rumble(joystick)
                                 rumble_on = False
 
-                # Lectura de sticks/gatillos
                 lx = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_X)), DEADZONE_STICK)
-                ly = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_Y)), DEADZONE_STICK)  # Solo debug
+                ly = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_LEFT_Y)), DEADZONE_STICK)
                 rx = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_RIGHT_X)), DEADZONE_STICK)
                 ry = deadzone(normalize_stick(safe_get_axis(joystick, AXIS_RIGHT_Y)), DEADZONE_STICK)
 
@@ -783,25 +834,26 @@ def main() -> None:
                 l2 = 0.0 if l2 < DEADZONE_TRIGGER else l2
                 r2 = 0.0 if r2 < DEADZONE_TRIGGER else r2
 
-                # Cruceta vertical -> flippers
                 hat_y = safe_get_hat_y(joystick)
 
-                # Botones
-                wrist_up = safe_get_button(joystick, BTN_WRIST_UP) == 1     # Y
-                wrist_down = safe_get_button(joystick, BTN_WRIST_DOWN) == 1 # A
-                grip_open = safe_get_button(joystick, BTN_GRIP_OPEN) == 1   # X
-                grip_close = safe_get_button(joystick, BTN_GRIP_CLOSE) == 1 # B
+                wrist_up = safe_get_button(joystick, BTN_WRIST_UP) == 1
+                wrist_down = safe_get_button(joystick, BTN_WRIST_DOWN) == 1
+                grip_open = safe_get_button(joystick, BTN_GRIP_OPEN) == 1
+                grip_close = safe_get_button(joystick, BTN_GRIP_CLOSE) == 1
 
                 drive_v, drive_w = compute_drive(lx, l2, r2, drive_mode_inverted)
+
+                home_active = home_pulse_remaining > 0
 
                 cmd = CommandState(
                     v=drive_v,
                     w=drive_w,
                     f=compute_flipper_from_hat(hat_y),
-                    base=compute_base(rx),
-                    elbow=compute_elbow(ry),
-                    wrist=compute_wrist(wrist_up, wrist_down),
-                    grip=compute_grip(grip_open, grip_close),
+                    base=0 if home_active else compute_base(rx),
+                    elbow=0 if home_active else compute_elbow(ry),
+                    wrist=0 if home_active else compute_wrist(wrist_up, wrist_down),
+                    grip=0 if home_active else compute_grip(grip_open, grip_close),
+                    home=1 if home_active else 0,
                 )
 
                 mov = describe(cmd)
@@ -830,6 +882,10 @@ def main() -> None:
                         publish_command(client, cmd)
                         total_mqtt_sent += 1
                         LAST_RUNTIME_SNAPSHOT["total_mqtt_sent"] = total_mqtt_sent
+
+                        if home_pulse_remaining > 0:
+                            home_pulse_remaining -= 1
+
                     except Exception:
                         logger.exception("[MQTT] Error publicando comando")
                         log_snapshot(
@@ -842,9 +898,9 @@ def main() -> None:
                 if now - last_print >= PRINT_INTERVAL:
                     last_print = now
                     logger.info(
-                        "[STAT] mode=%s v=%4d w=%4d f=%4d base=%4d elbow=%4d wrist=%4d grip=%4d "
+                        "[STAT] mode=%s v=%4d w=%4d f=%4d base=%4d elbow=%4d wrist=%4d grip=%4d home=%d "
                         "LX=%+.2f LY=%+.2f RX=%+.2f RY=%+.2f L2=%.2f R2=%.2f HATY=%+d "
-                        "Y=%d A=%d X=%d B=%d "
+                        "Y=%d A=%d X=%d B=%d HOME_BTN=%d "
                         "%s loops=%s events=%s mqtt=%s got=%s mem=%.2fMB",
                         "INV" if drive_mode_inverted else "NOR",
                         cmd.v,
@@ -854,6 +910,7 @@ def main() -> None:
                         cmd.elbow,
                         cmd.wrist,
                         cmd.grip,
+                        cmd.home,
                         lx,
                         ly,
                         rx,
@@ -865,6 +922,7 @@ def main() -> None:
                         int(wrist_down),
                         int(grip_open),
                         int(grip_close),
+                        BTN_ARM_HOME,
                         mov,
                         total_loops,
                         total_events,
@@ -891,6 +949,9 @@ def main() -> None:
                             "grip_close": grip_close,
                             "hat_y": hat_y,
                             "drive_mode_inverted": drive_mode_inverted,
+                            "arm_home": get_arm_home_positions(),
+                            "btn_arm_home": BTN_ARM_HOME,
+                            "home_pulse_remaining": home_pulse_remaining,
                         },
                     )
 
@@ -949,7 +1010,14 @@ def main() -> None:
         logger.exception("[MQTT] Error cerrando cliente")
 
     shutdown_pygame()
-    log_snapshot(level=logging.INFO, reason="program_end")
+    log_snapshot(
+        level=logging.INFO,
+        reason="program_end",
+        extra={
+            "arm_home": get_arm_home_positions(),
+            "btn_arm_home": BTN_ARM_HOME,
+        },
+    )
     logger.info("[EXIT] Programa terminado.")
     shutdown_logging()
 
