@@ -108,7 +108,7 @@ AXIS_L2 = int(os.getenv("AXIS_L2", "4"))
 AXIS_R2 = int(os.getenv("AXIS_R2", "5"))
 
 # Button mapping
-BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "9"))
+BTN_OPTIONS = int(os.getenv("BTN_OPTIONS", "7"))
 BTN_DRIVE_MODE_TOGGLE = int(os.getenv("BTN_DRIVE_MODE_TOGGLE", "8"))
 
 # Botón HOME del brazo
@@ -603,7 +603,7 @@ def compute_drive(
 
     if inverted_drive:
         v = -v
-        w = w
+        w = -w
 
     return clamp(v, -1000, 1000), clamp(w, -1000, 1000)
 
